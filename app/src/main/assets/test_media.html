@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Page locale de test média</title></head><body>
+<h1>Test détection média</h1>
+<video controls width="480" src="https://example.com/direct/video.mp4"></video>
+<video controls><source src="https://example.com/source/movie.mp4?token=test" type="video/mp4"></video>
+<script>
+setTimeout(()=>{const v=document.createElement('video');v.src='https://example.com/dynamic/clip.webm';document.body.append(v)},500);
+fetch('https://example.com/live/master.m3u8').catch(()=>{});
+const x=new XMLHttpRequest();x.open('GET','https://example.com/vod/manifest.mpd');
+const blob=URL.createObjectURL(new Blob(['test'],{type:'video/mp4'}));
+setTimeout(()=>fetch('https://example.com/blob-upstream/master.m3u8').catch(()=>{}),750);
+</script></body></html>
