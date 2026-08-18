@@ -8,14 +8,18 @@ class SimpleAdBlockEngine(
     initialRules: FilterRules,
     private val siteEnabled: (String) -> Boolean,
     private val updateSiteEnabled: (String, Boolean) -> Unit,
+    private val siteOptions: (String) -> com.local.webcaster.data.SitePreferences,
 ) : AdBlockEngine {
     constructor(initialRules: FilterRules, preferences: PreferencesRepository) : this(
         initialRules,
         preferences::isAdBlockEnabled,
         preferences::setAdBlockEnabled,
+        preferences::sitePreferences,
     )
 
-    internal constructor(initialRules: FilterRules) : this(initialRules, { true }, { _, _ -> })
+    internal constructor(initialRules: FilterRules) : this(
+        initialRules, { true }, { _, _ -> }, { com.local.webcaster.data.SitePreferences() }
+    )
 
     @Volatile private var enabled = true
     @Volatile private var rules = initialRules
@@ -24,6 +28,7 @@ class SimpleAdBlockEngine(
         if (!enabled) return false
         val pageHost = host(request.pageUrl)
         if (pageHost.isNotBlank() && !isEnabledForSite(pageHost)) return false
+        val options = siteOptions(pageHost)
         val requestHost = host(request.url)
         if (requestHost.isBlank()) return false
 
@@ -34,20 +39,26 @@ class SimpleAdBlockEngine(
         val blockedDomain = matches(requestHost, rules.blockedDomains) ||
             thirdParty && matches(requestHost, rules.thirdPartyBlockedDomains)
         val definiteAd = definiteAdvertisingRequest(request.url)
+        val tracker = !definiteAd && (suspiciousRequest(request.url) || TRACKER_HOST_HINTS.any(requestHost::contains))
         if (request.isMainFrame) {
             // A real user gesture may open a legitimate third-party site, but never turns a known
             // ad-network or fake redirect destination into a safe navigation.
-            return thirdParty && (blockedDomain || definiteAd && (request.isRedirect || !request.hasUserGesture))
+            return thirdParty && options.ads &&
+                (blockedDomain || definiteAd && (request.isRedirect || !request.hasUserGesture))
         }
-        if (request.isMediaRequest) return blockedDomain || thirdParty && definiteAd
-        return blockedDomain || suspiciousRequest(request.url) && (thirdParty || definiteAd)
+        if (request.isMediaRequest) return options.ads && (blockedDomain || thirdParty && definiteAd)
+        return blockedDomain && (if (tracker) options.trackers else options.ads) ||
+            options.ads && definiteAd && thirdParty || options.trackers && tracker && thirdParty
     }
 
     override fun setEnabled(enabled: Boolean) {
         this.enabled = enabled
     }
 
-    override fun isEnabledForSite(host: String): Boolean = siteEnabled(host)
+    override fun isEnabledForSite(host: String): Boolean {
+        val value = siteOptions(host)
+        return siteEnabled(host) && (value.ads || value.trackers)
+    }
 
     override fun setEnabledForSite(host: String, enabled: Boolean) =
         updateSiteEnabled(host, enabled)
@@ -99,5 +110,6 @@ class SimpleAdBlockEngine(
             "/vast/", "/vmap/", "/preroll/", "/pre-roll/", "/midroll/", "/video-ad/",
             "/adserver/", "/pagead/", "ad_break=", "adbreak=", "ad_unit=", "adunit=",
         )
+        val TRACKER_HOST_HINTS = listOf("analytics", "telemetry", "tracker", "tracking", "metrics", "pixel")
     }
 }

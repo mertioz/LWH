@@ -1,5 +1,6 @@
 package com.local.webcaster.hls
 
+import com.local.webcaster.detection.SubtitleTrack
 import java.net.URI
 
 class HlsManifestParser {
@@ -9,12 +10,26 @@ class HlsManifestParser {
         if (lines.firstOrNull() != "#EXTM3U") return HlsManifest(false, false, false, false, emptyList())
 
         val variants = mutableListOf<HlsVariant>()
+        val subtitles = mutableListOf<SubtitleTrack>()
         var pendingAttributes: Map<String, String>? = null
         var drm = false
         var hasMediaSegments = false
         for (line in lines.drop(1)) {
             when {
                 line.startsWith("#EXT-X-STREAM-INF:") -> pendingAttributes = parseAttributes(line.substringAfter(':'))
+                line.startsWith("#EXT-X-MEDIA:") -> {
+                    val attrs = parseAttributes(line.substringAfter(':'))
+                    val uri = attrs["URI"]
+                    if (attrs["TYPE"].equals("SUBTITLES", true) && !uri.isNullOrBlank()) {
+                        subtitles += SubtitleTrack(
+                            url = resolve(manifestUrl, uri),
+                            label = attrs["NAME"].orEmpty().ifBlank { attrs["LANGUAGE"].orEmpty().ifBlank { "Subtitles" } },
+                            language = attrs["LANGUAGE"]?.takeIf(String::isNotBlank),
+                            mimeType = "application/x-mpegURL",
+                            isDefault = attrs["DEFAULT"].equals("YES", true),
+                        )
+                    }
+                }
                 line.startsWith("#EXT-X-KEY:") || line.startsWith("#EXT-X-SESSION-KEY:") -> {
                     val attrs = parseAttributes(line.substringAfter(':'))
                     val method = attrs["METHOD"].orEmpty()
@@ -42,7 +57,9 @@ class HlsManifestParser {
         }
         val master = variants.isNotEmpty()
         val live = !master && hasMediaSegments && lines.none { it == "#EXT-X-ENDLIST" }
-        return HlsManifest(true, master, live, drm, variants.distinctBy { it.url })
+        return HlsManifest(
+            true, master, live, drm, variants.distinctBy { it.url }, subtitles.distinctBy { it.url }
+        )
     }
 
     internal fun parseAttributes(value: String): Map<String, String> {

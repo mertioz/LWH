@@ -2,6 +2,9 @@ package com.local.webcaster.ui.browser
 
 import android.text.format.DateUtils
 import android.webkit.WebView
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -58,6 +61,7 @@ import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.Tab
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -112,6 +116,7 @@ import com.local.webcaster.data.Bookmark
 import com.local.webcaster.data.HistoryEntry
 import com.local.webcaster.detection.MediaCandidate
 import com.local.webcaster.ui.cast.CastMiniController
+import com.local.webcaster.ui.cast.CastQueueSheet
 import com.local.webcaster.ui.media.MediaCandidateSheet
 
 @Composable
@@ -122,7 +127,7 @@ fun BrowserScreen(
     history: List<HistoryEntry>,
     frequent: List<HistoryEntry>,
     bookmarks: List<Bookmark>,
-    webViewFactory: (WebView) -> Unit,
+    activeWebView: WebView?,
     onAddressChange: (String) -> Unit,
     onNavigate: () -> Unit,
     onOpenUrl: (String) -> Unit,
@@ -130,14 +135,24 @@ fun BrowserScreen(
     onForward: () -> Unit,
     onReload: () -> Unit,
     onHome: () -> Unit,
+    onReturnToPage: () -> Unit,
     onShowHistory: () -> Unit,
     onShowBookmarks: () -> Unit,
     onShowSettings: () -> Unit,
+    onNewTab: () -> Unit,
+    onSwitchTab: (String) -> Unit,
+    onCloseTab: (String) -> Unit,
     onAddBookmark: () -> Unit,
     onRemoveBookmark: (String) -> Unit,
     onRenameBookmark: (String, String) -> Unit,
     onDeleteHistory: (String) -> Unit,
     onToggleShield: () -> Unit,
+    onSiteAds: (Boolean) -> Unit,
+    onSiteTrackers: (Boolean) -> Unit,
+    onSitePopups: (Boolean) -> Unit,
+    onSiteQuickCast: (Boolean) -> Unit,
+    onDesktopMode: (Boolean) -> Unit,
+    onResetSitePreferences: () -> Unit,
     onPopupSetting: (Boolean) -> Unit,
     onClearHistory: () -> Unit,
     onClearCookies: () -> Unit,
@@ -145,18 +160,41 @@ fun BrowserScreen(
     onClearAllData: () -> Unit,
     onCast: (MediaCandidate) -> Unit,
     onCastViaRelay: (MediaCandidate) -> Unit,
+    onQuickCast: () -> Unit,
+    onPlayNext: (MediaCandidate) -> Unit,
+    onAddToQueue: (MediaCandidate) -> Unit,
+    onLocalPlay: (MediaCandidate) -> Unit,
     onCastButtonReady: (MediaRouteButton?) -> Unit,
     onCastToggle: () -> Unit,
     onCastSeek: (Long) -> Unit,
+    onCastVolume: (Float) -> Unit,
+    onCastSubtitle: (Long?) -> Unit,
+    onCastQueuePlay: (Int) -> Unit,
+    onCastQueueRemove: (Int) -> Unit,
+    onCastQueueMove: (Int, Int) -> Unit,
+    onCastQueueClear: () -> Unit,
+    onOpenExpandedCast: () -> Unit,
     onCastStop: () -> Unit,
     onMessageShown: () -> Unit,
     onCastMessageShown: () -> Unit,
 ) {
     var sheetOpen by remember { mutableStateOf(false) }
+    var tabsOpen by remember { mutableStateOf(false) }
+    var protectionOpen by remember { mutableStateOf(false) }
+    var queueOpen by remember { mutableStateOf(false) }
     var clearAction by remember { mutableStateOf<ClearAction?>(null) }
     val snackbar = remember { SnackbarHostState() }
     val rootFocusManager = LocalFocusManager.current
     val rootKeyboard = LocalSoftwareKeyboardController.current
+
+    BackHandler(enabled = sheetOpen || tabsOpen || protectionOpen || queueOpen) {
+        when {
+            queueOpen -> queueOpen = false
+            protectionOpen -> protectionOpen = false
+            tabsOpen -> tabsOpen = false
+            else -> sheetOpen = false
+        }
+    }
 
     LaunchedEffect(state.destination) {
         if (state.destination == BrowserDestination.BROWSER) {
@@ -191,15 +229,21 @@ fun BrowserScreen(
                 isBookmarked = bookmarks.any { it.url == state.currentUrl },
                 onAddressChange = onAddressChange,
                 onNavigate = onNavigate,
-                onBack = if (state.destination == BrowserDestination.BROWSER) onBack else onHome,
+                onBack = when (state.destination) {
+                    BrowserDestination.BROWSER -> onBack
+                    BrowserDestination.HOME -> onHome
+                    else -> onReturnToPage
+                },
                 onForward = onForward,
                 onReload = onReload,
                 onHome = onHome,
                 onShowHistory = onShowHistory,
                 onShowBookmarks = onShowBookmarks,
                 onShowSettings = onShowSettings,
+                onNewTab = onNewTab,
+                onShowTabs = { tabsOpen = true },
                 onAddBookmark = onAddBookmark,
-                onToggleShield = onToggleShield,
+                onToggleShield = { protectionOpen = true },
                 onCastButtonReady = onCastButtonReady,
             )
         },
@@ -209,7 +253,16 @@ fun BrowserScreen(
                 enter = slideInVertically { it } + fadeIn(),
                 exit = slideOutVertically { it } + fadeOut(),
             ) {
-                CastMiniController(castState, onCastToggle, onCastSeek, onCastStop)
+                CastMiniController(
+                    castState,
+                    onCastToggle,
+                    onCastSeek,
+                    onCastVolume,
+                    onCastSubtitle,
+                    { queueOpen = true },
+                    onOpenExpandedCast,
+                    onCastStop,
+                )
             }
         },
         floatingActionButton = {
@@ -218,13 +271,20 @@ fun BrowserScreen(
                 enter = scaleIn() + fadeIn(),
                 exit = scaleOut() + fadeOut(),
             ) {
-                SmallFloatingActionButton(
-                    onClick = { sheetOpen = true },
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                ) {
-                    BadgedBox(badge = { Badge { Text(candidates.size.coerceAtMost(99).toString()) } }) {
-                        Icon(Icons.Rounded.VideoLibrary, "Videos detectees")
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SmallFloatingActionButton(
+                        onClick = onQuickCast,
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ) { Icon(Icons.Rounded.Cast, "Quick Cast") }
+                    SmallFloatingActionButton(
+                        onClick = { sheetOpen = true },
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    ) {
+                        BadgedBox(badge = { Badge { Text(candidates.size.coerceAtMost(99).toString()) } }) {
+                            Icon(Icons.Rounded.VideoLibrary, "Videos detectees")
+                        }
                     }
                 }
             }
@@ -232,7 +292,21 @@ fun BrowserScreen(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             AndroidView(
-                factory = { WebView(it).also(webViewFactory) },
+                factory = { FrameLayout(it) },
+                update = { container ->
+                    val webView = activeWebView
+                    if (webView != null && container.getChildAt(0) !== webView) {
+                        (webView.parent as? ViewGroup)?.removeView(webView)
+                        container.removeAllViews()
+                        container.addView(
+                            webView,
+                            FrameLayout.LayoutParams(
+                                FrameLayout.LayoutParams.MATCH_PARENT,
+                                FrameLayout.LayoutParams.MATCH_PARENT,
+                            ),
+                        )
+                    }
+                },
                 modifier = Modifier.fillMaxSize(),
             )
             when (state.destination) {
@@ -283,6 +357,7 @@ fun BrowserScreen(
     if (sheetOpen) {
         MediaCandidateSheet(
             candidates = candidates,
+            castState = castState,
             onDismiss = { sheetOpen = false },
             onCast = { candidate ->
                 onCast(candidate)
@@ -292,6 +367,44 @@ fun BrowserScreen(
                 onCastViaRelay(candidate)
                 if (candidate.unavailableReason == null && !candidate.isDrm) sheetOpen = false
             },
+            onPlayNext = onPlayNext,
+            onAddToQueue = onAddToQueue,
+            onLocalPlay = onLocalPlay,
+        )
+    }
+
+    if (tabsOpen) {
+        TabSwitcherSheet(
+            tabs = state.tabs,
+            activeTabId = state.activeTabId,
+            onDismiss = { tabsOpen = false },
+            onNewTab = { tabsOpen = false; onNewTab() },
+            onSelect = { tabsOpen = false; onSwitchTab(it) },
+            onClose = onCloseTab,
+        )
+    }
+
+    if (protectionOpen) {
+        SiteProtectionSheet(
+            state = state,
+            onDismiss = { protectionOpen = false },
+            onAds = onSiteAds,
+            onTrackers = onSiteTrackers,
+            onPopups = onSitePopups,
+            onQuickCast = onSiteQuickCast,
+            onDesktopMode = onDesktopMode,
+            onReset = onResetSitePreferences,
+        )
+    }
+
+    if (queueOpen) {
+        CastQueueSheet(
+            queue = castState.queue,
+            onDismiss = { queueOpen = false },
+            onPlay = onCastQueuePlay,
+            onRemove = onCastQueueRemove,
+            onMove = onCastQueueMove,
+            onClear = onCastQueueClear,
         )
     }
 
@@ -333,6 +446,8 @@ private fun BrowserToolbar(
     onShowHistory: () -> Unit,
     onShowBookmarks: () -> Unit,
     onShowSettings: () -> Unit,
+    onNewTab: () -> Unit,
+    onShowTabs: () -> Unit,
     onAddBookmark: () -> Unit,
     onToggleShield: () -> Unit,
     onCastButtonReady: (MediaRouteButton?) -> Unit,
@@ -348,12 +463,6 @@ private fun BrowserToolbar(
             ) {
                 IconButton(onClick = onBack, enabled = state.destination != BrowserDestination.HOME) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Precedent")
-                }
-                IconButton(
-                    onClick = onForward,
-                    enabled = state.destination == BrowserDestination.BROWSER && state.canGoForward,
-                ) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Suivant")
                 }
                 AddressField(
                     value = state.address,
@@ -389,15 +498,29 @@ private fun BrowserToolbar(
                         onRelease = { onCastButtonReady(null) },
                     )
                 }
+                BadgedBox(badge = { Badge { Text(state.tabs.size.toString()) } }) {
+                    IconButton(onClick = onShowTabs) { Icon(Icons.Rounded.Tab, "Onglets") }
+                }
                 Box {
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(Icons.Rounded.MoreVert, "Options")
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
+                            text = { Text("Nouvel onglet") },
+                            leadingIcon = { Icon(Icons.Rounded.Tab, null) },
+                            onClick = { menuOpen = false; onNewTab() },
+                        )
+                        DropdownMenuItem(
                             text = { Text("Accueil") },
                             leadingIcon = { Icon(Icons.Rounded.Home, null) },
                             onClick = { menuOpen = false; onHome() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Page suivante") },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Rounded.ArrowForward, null) },
+                            enabled = state.destination == BrowserDestination.BROWSER && state.canGoForward,
+                            onClick = { menuOpen = false; onForward() },
                         )
                         DropdownMenuItem(
                             text = { Text("Historique") },

@@ -2,6 +2,7 @@ package com.local.webcaster.security
 
 import com.local.webcaster.detection.MediaObservation
 import com.local.webcaster.detection.SourceType
+import com.local.webcaster.detection.SubtitleTrack
 import org.json.JSONObject
 
 object MessageValidator {
@@ -16,7 +17,8 @@ object MessageValidator {
             val blob = UrlValidator.isBlobMediaUrl(url)
             if (!blob && !UrlValidator.isValidMediaUrl(url)) return null
             val allowedKeys = setOf(
-                "type", "url", "source", "mime", "title", "width", "height", "drm", "documentStartedAt"
+                "type", "url", "source", "mime", "title", "width", "height", "drm", "documentStartedAt",
+                "poster", "tracks", "durationMs",
             )
             if (json.keys().asSequence().any { it !in allowedKeys }) return null
             MediaObservation(
@@ -29,6 +31,25 @@ object MessageValidator {
                 height = json.optInt("height", 0).takeIf { it in 1..16_384 },
                 isDrm = json.optBoolean("drm", false),
                 documentStartedAt = json.optLong("documentStartedAt", 0L).takeIf { it > 0L },
+                posterUrl = json.optString("poster").takeIf(UrlValidator::isValidMediaUrl),
+                subtitleTracks = buildList {
+                    val tracks = json.optJSONArray("tracks")
+                    for (index in 0 until minOf(tracks?.length() ?: 0, 32)) {
+                        val track = tracks?.optJSONObject(index) ?: continue
+                        val trackUrl = track.optString("url")
+                        if (!UrlValidator.isValidMediaUrl(trackUrl)) continue
+                        add(
+                            SubtitleTrack(
+                                url = UrlValidator.normalize(trackUrl) ?: continue,
+                                label = track.optString("label").take(100).ifBlank { "Subtitles" },
+                                language = track.optString("language").take(35).takeIf(String::isNotBlank),
+                                mimeType = track.optString("mime").take(100).ifBlank { "text/vtt" },
+                                isDefault = track.optBoolean("default"),
+                            )
+                        )
+                    }
+                },
+                durationMs = json.optLong("durationMs", 0L).takeIf { it in 1..86_400_000L },
                 unavailableReason = if (blob) {
                     "Cette video utilise blob:/MediaSource. Le flux reseau reel doit etre detecte avant de pouvoir la caster."
                 } else null,

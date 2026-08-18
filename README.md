@@ -9,7 +9,11 @@ Application Android personnelle en Kotlin, Jetpack Compose et WebView pour déte
 - déduplication/scoring des flux HLS, DASH, MP4, WebM, vidéo et audio ;
 - inspection HLS (master, variantes, résolution, débit, live/VOD et DRM) et inspection DRM DASH ;
 - Cast direct via le Default Media Receiver avec mini-controller ;
+- partage Android vers CASTER, onglets persistants avec seulement trois WebView actives et preferences par site ;
+- Quick Cast, file d'attente Cast, sous-titres WebVTT/HLS compatibles et diagnostics expurges ;
+- controleur Cast synchronise (receiver, progression, volume, pistes, artwork) avec notification officielle ;
 - relay LAN temporaire et tokenisé pour les cookies/headers requis, avec Range/HEAD et réécriture HLS ;
+- lecture locale Media3 (HLS, DASH, MP4/WebM) avec sous-titres et Picture-in-Picture ;
 - aucune télémétrie, publicité, connexion utilisateur ou permission de stockage.
 
 ## Compiler

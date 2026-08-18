@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.webkit.CookieManager
 import android.webkit.WebStorage
 import android.webkit.WebView
+import android.view.ViewGroup
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewFeature
 import androidx.webkit.ServiceWorkerClientCompat
@@ -26,7 +27,10 @@ class BrowserController(
     adBlockEngine: AdBlockEngine,
     private val preferences: PreferencesRepository,
     private val callbacks: Callbacks,
+    private val openInNewTab: (String) -> Unit = {},
 ) {
+    private val mobileUserAgent = webView.settings.userAgentString.orEmpty()
+    private lateinit var requestClient: BrowserWebViewClient
     private val assetLoader = WebViewAssetLoader.Builder()
         .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
         .build()
@@ -66,20 +70,22 @@ class BrowserController(
                 override fun onHistoryUpdated(url: String, canGoBack: Boolean, canGoForward: Boolean) =
                     callbacks.onHistoryUpdated(url, canGoBack, canGoForward)
                 override fun onError(message: String) = callbacks.onError(message)
+                override fun onRequestBlocked() = callbacks.onRequestBlocked()
             }
         )
+        requestClient = webViewClient
         webView.webViewClient = webViewClient
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE)) {
-            val clientReference = WeakReference(webViewClient)
-            ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(
-                object : ServiceWorkerClientCompat() {
-                    override fun shouldInterceptRequest(request: android.webkit.WebResourceRequest) =
-                        clientReference.get()?.interceptRequest(request)
-                }
-            )
-        }
+        activateRequestInterception()
         webView.webChromeClient = BrowserWebChromeClient(
-            webView, { preferences.blockPopups }, callbacks::onProgress, callbacks::onTitle
+            webView,
+            {
+                val host = runCatching { URI(webView.url.orEmpty()).host.orEmpty() }.getOrDefault("")
+                preferences.blockPopups && preferences.sitePreferences(host).popups
+            },
+            openInNewTab,
+            callbacks::onRequestBlocked,
+            callbacks::onProgress,
+            callbacks::onTitle,
         )
     }
 
@@ -93,6 +99,7 @@ class BrowserController(
                 URLEncoder.encode(trimmed, StandardCharsets.UTF_8.name())
             )
         }
+        applySiteModeForUrl(target)
         prepareNavigation(target)
         webView.loadUrl(target)
     }
@@ -117,6 +124,7 @@ class BrowserController(
         }
     }
     fun home() {
+        webView.settings.userAgentString = mobileUserAgent
         prepareNavigation(BrowserWebViewClient.HOME_URL)
         webView.loadUrl(BrowserWebViewClient.HOME_URL)
     }
@@ -138,7 +146,11 @@ class BrowserController(
     }
     fun saveState(): Bundle = Bundle().also(webView::saveState)
     fun restoreState(state: Bundle): Boolean = webView.restoreState(state) != null
-    fun destroy() = webView.destroy()
+    fun destroy() {
+        (webView.parent as? ViewGroup)?.removeView(webView)
+        webView.stopLoading()
+        webView.destroy()
+    }
 
     fun clearHistory() {
         webView.clearHistory()
@@ -165,6 +177,37 @@ class BrowserController(
 
     fun currentHost(): String = runCatching { URI(webView.url.orEmpty()).host.orEmpty() }.getOrDefault("")
 
+    fun applySiteMode(reload: Boolean = false) {
+        applySiteModeForUrl(webView.url.orEmpty(), reload)
+    }
+
+    private fun applySiteModeForUrl(url: String, reload: Boolean = false) {
+        val targetHost = runCatching { URI(url).host.orEmpty() }.getOrDefault("")
+        val desktop = preferences.sitePreferences(targetHost).desktopMode
+        val target = if (desktop) desktopUserAgent(mobileUserAgent) else mobileUserAgent
+        if (webView.settings.userAgentString != target) {
+            webView.settings.userAgentString = target
+            if (reload) webView.reload()
+        }
+    }
+
+    fun rescanMedia() {
+        webView.evaluateJavascript("window.__localCasterRescan && window.__localCasterRescan()", null)
+    }
+
+    fun activateRequestInterception() {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE) ||
+            !::requestClient.isInitialized
+        ) return
+        val clientReference = WeakReference(requestClient)
+        ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(
+            object : ServiceWorkerClientCompat() {
+                override fun shouldInterceptRequest(request: android.webkit.WebResourceRequest) =
+                    clientReference.get()?.interceptRequest(request)
+            }
+        )
+    }
+
     interface Callbacks {
         fun onNavigationRequested(url: String)
         fun onPageStarted(url: String)
@@ -173,5 +216,13 @@ class BrowserController(
         fun onProgress(progress: Int)
         fun onTitle(title: String)
         fun onError(message: String)
+        fun onRequestBlocked()
+    }
+
+    private fun desktopUserAgent(value: String): String {
+        val chrome = Regex("Chrome/[0-9.]+", RegexOption.IGNORE_CASE).find(value)?.value
+            ?: "Chrome/120.0.0.0"
+        return "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) $chrome Safari/537.36"
     }
 }

@@ -42,4 +42,19 @@ class HlsManifestParserTest {
         val encrypted = parser.parse("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n#EXTINF:4,\na.ts", "https://a.test/a.m3u8")
         assertTrue(encrypted.isDrm)
     }
+
+    @Test fun parsesNamedSubtitleRenditions() {
+        val text = """
+            #EXTM3U
+            #EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="Francais",LANGUAGE="fr",DEFAULT=YES,URI="subs/fr.m3u8"
+            #EXT-X-STREAM-INF:BANDWIDTH=2000000,SUBTITLES="subs"
+            video/main.m3u8
+        """.trimIndent()
+        val result = parser.parse(text, "https://cdn.test/master.m3u8")
+        assertEquals(1, result.subtitles.size)
+        assertEquals("Francais", result.subtitles.single().label)
+        assertEquals("fr", result.subtitles.single().language)
+        assertTrue(result.subtitles.single().isDefault)
+        assertEquals("https://cdn.test/subs/fr.m3u8", result.subtitles.single().url)
+    }
 }

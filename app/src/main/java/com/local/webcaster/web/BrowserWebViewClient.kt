@@ -60,6 +60,7 @@ class BrowserWebViewClient(
             mediaDetector.observeNetwork(url, currentPage.get(), headers = headers)
         }
         if (block) {
+            callbacks.onRequestBlocked()
             SafeLogger.debug(
                 "ADBLOCK_BLOCK main=${request.isForMainFrame} media=$mediaTransport url=${SafeLogger.redactedUrl(url)}"
             )
@@ -81,6 +82,7 @@ class BrowserWebViewClient(
         )
         if (blocked && request.isForMainFrame) callbacks.onError("Redirection publicitaire bloquee.")
         if (blocked) {
+            callbacks.onRequestBlocked()
             SafeLogger.debug(
                 "ADBLOCK_BLOCK navigation=true main=${request.isForMainFrame} url=${SafeLogger.redactedUrl(request.url.toString())}"
             )
@@ -134,6 +136,7 @@ class BrowserWebViewClient(
         fun onPageFinished(url: String, title: String?, canGoBack: Boolean, canGoForward: Boolean)
         fun onHistoryUpdated(url: String, canGoBack: Boolean, canGoForward: Boolean)
         fun onError(message: String)
+        fun onRequestBlocked()
     }
 
     companion object {

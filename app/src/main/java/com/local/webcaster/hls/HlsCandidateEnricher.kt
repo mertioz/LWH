@@ -52,6 +52,7 @@ class HlsCandidateEnricher(
                     .apply { candidate.requiredHeaders.forEach { (name, value) -> header(name, value) } }
                     .build()
                 client.newCall(request).execute().use { response ->
+                    repository.update(candidate.id) { it.copy(lastHttpStatus = response.code) }
                     SafeLogger.debug(
                         "HTTP_STATUS manifest=${response.code} type=HLS url=${SafeLogger.redactedUrl(candidate.resolvedUrl)}"
                     )
@@ -78,6 +79,8 @@ class HlsCandidateEnricher(
                             isLive = live,
                             isDrm = drm,
                             confidence = if (drm) 1 else if (manifest.isMaster) 100 else 98,
+                            subtitleTracks = (it.subtitleTracks + manifest.subtitles).distinctBy { track -> track.url },
+                            lastHttpStatus = response.code,
                         )
                     }
                     if (!manifest.isDrm) manifest.variants.forEach { variant ->
@@ -116,6 +119,7 @@ class HlsCandidateEnricher(
             .apply { candidate.requiredHeaders.forEach { (name, value) -> header(name, value) } }
             .build()
         client.newCall(request).execute().use { response ->
+            repository.update(candidate.id) { it.copy(lastHttpStatus = response.code) }
             SafeLogger.debug(
                 "HTTP_STATUS manifest=${response.code} type=DASH url=${SafeLogger.redactedUrl(candidate.resolvedUrl)}"
             )
@@ -132,6 +136,7 @@ class HlsCandidateEnricher(
                     mimeType = response.header("Content-Type")?.substringBefore(';') ?: "application/dash+xml",
                     isDrm = drm,
                     confidence = if (drm) 1 else 96,
+                    lastHttpStatus = response.code,
                 )
             }
         }

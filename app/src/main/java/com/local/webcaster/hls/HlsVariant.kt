@@ -1,5 +1,7 @@
 package com.local.webcaster.hls
 
+import com.local.webcaster.detection.SubtitleTrack
+
 data class HlsVariant(
     val url: String,
     val bandwidth: Long? = null,
@@ -14,4 +16,5 @@ data class HlsManifest(
     val isLive: Boolean,
     val isDrm: Boolean,
     val variants: List<HlsVariant>,
+    val subtitles: List<SubtitleTrack> = emptyList(),
 )

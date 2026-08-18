@@ -6,6 +6,14 @@ enum class SourceType {
     DOM, VIDEO_CURRENT_SRC, SOURCE_ELEMENT, NETWORK, FETCH, XHR, PERFORMANCE, HLS_VARIANT, ENCRYPTED_MEDIA
 }
 
+data class SubtitleTrack(
+    val url: String,
+    val label: String,
+    val language: String? = null,
+    val mimeType: String = "text/vtt",
+    val isDefault: Boolean = false,
+)
+
 data class MediaCandidate(
     val id: String,
     val url: String,
@@ -29,6 +37,10 @@ data class MediaCandidate(
     val discoveredAt: Long = System.currentTimeMillis(),
     val requiredHeaders: Map<String, String> = emptyMap(),
     val discoverySources: Set<SourceType> = setOf(sourceType),
+    val posterUrl: String? = null,
+    val subtitleTracks: List<SubtitleTrack> = emptyList(),
+    val lastHttpStatus: Int? = null,
+    val durationMs: Long? = null,
 )
 
 data class MediaObservation(
@@ -48,4 +60,7 @@ data class MediaObservation(
     val relayRequired: Boolean = false,
     val requiredHeaders: Map<String, String> = emptyMap(),
     val documentStartedAt: Long? = null,
+    val posterUrl: String? = null,
+    val subtitleTracks: List<SubtitleTrack> = emptyList(),
+    val durationMs: Long? = null,
 )

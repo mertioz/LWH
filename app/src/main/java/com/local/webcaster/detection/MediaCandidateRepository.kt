@@ -95,6 +95,11 @@ class MediaCandidateRepository {
                 discoveredAt = now,
                 requiredHeaders = previous?.requiredHeaders.orEmpty() + observation.requiredHeaders,
                 discoverySources = sources,
+                posterUrl = observation.posterUrl ?: previous?.posterUrl,
+                subtitleTracks = (previous?.subtitleTracks.orEmpty() + observation.subtitleTracks)
+                    .distinctBy { it.url },
+                lastHttpStatus = previous?.lastHttpStatus,
+                durationMs = observation.durationMs ?: previous?.durationMs,
             )
             candidates[key] = candidate
             if (previous == null) {

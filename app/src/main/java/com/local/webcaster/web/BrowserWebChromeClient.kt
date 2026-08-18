@@ -12,6 +12,8 @@ import com.local.webcaster.security.SafeLogger
 class BrowserWebChromeClient(
     private val mainWebView: WebView,
     private val blockPopups: () -> Boolean,
+    private val openInNewTab: (String) -> Unit,
+    private val onPopupBlocked: () -> Unit,
     private val onProgress: (Int) -> Unit,
     private val onTitle: (String) -> Unit,
 ) : WebChromeClient() {
@@ -23,6 +25,7 @@ class BrowserWebChromeClient(
     override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
         if (blockPopups() && !isUserGesture) {
             SafeLogger.debug("ADBLOCK_POPUP blocked=true userGesture=false")
+            onPopupBlocked()
             return false
         }
         val popup = WebView(view.context)
@@ -38,10 +41,26 @@ class BrowserWebChromeClient(
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 if (!handled && url.startsWith("http")) {
                     handled = true
-                    mainWebView.loadUrl(url)
+                    if (isUserGesture) openInNewTab(url) else mainWebView.loadUrl(url)
                     view.stopLoading()
                     view.destroy()
                 }
+            }
+
+            override fun shouldOverrideUrlLoading(view: WebView, request: android.webkit.WebResourceRequest): Boolean {
+                if (request.url.scheme !in setOf("http", "https")) {
+                    view.destroy()
+                    return true
+                }
+                return false
+            }
+
+            override fun onReceivedError(
+                view: WebView,
+                request: android.webkit.WebResourceRequest,
+                error: android.webkit.WebResourceError,
+            ) {
+                if (request.isForMainFrame) view.destroy()
             }
         }
         (resultMsg.obj as WebView.WebViewTransport).webView = popup

@@ -9,6 +9,7 @@ interface MediaRelay {
     fun stop()
     val isRunning: Boolean
     val activeCandidate: MediaCandidate?
+    val lastStatusCode: Int? get() = null
     fun hasNetworkChanged(): Boolean
 }
 

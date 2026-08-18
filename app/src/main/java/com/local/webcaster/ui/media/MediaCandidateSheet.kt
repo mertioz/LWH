@@ -14,11 +14,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Cast
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -35,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -42,15 +45,21 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.local.webcaster.detection.MediaCandidate
 import com.local.webcaster.detection.MediaType
+import com.local.webcaster.cast.CastUiState
+import com.local.webcaster.diagnostics.DiagnosticBuilder
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MediaCandidateSheet(
     candidates: List<MediaCandidate>,
+    castState: CastUiState,
     onDismiss: () -> Unit,
     onCast: (MediaCandidate) -> Unit,
     onCastViaRelay: (MediaCandidate) -> Unit,
+    onPlayNext: (MediaCandidate) -> Unit,
+    onAddToQueue: (MediaCandidate) -> Unit,
+    onLocalPlay: (MediaCandidate) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -79,7 +88,10 @@ fun MediaCandidateSheet(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(candidates, key = { it.id }) { candidate ->
-                CandidateCard(candidate, onCast, onCastViaRelay, Modifier.padding(horizontal = 12.dp))
+                CandidateCard(
+                    candidate, castState, onCast, onCastViaRelay, onPlayNext, onAddToQueue,
+                    onLocalPlay, Modifier.padding(horizontal = 12.dp)
+                )
             }
             item { Spacer(Modifier.height(18.dp)) }
         }
@@ -90,11 +102,16 @@ fun MediaCandidateSheet(
 @Composable
 private fun CandidateCard(
     candidate: MediaCandidate,
+    castState: CastUiState,
     onCast: (MediaCandidate) -> Unit,
     onCastViaRelay: (MediaCandidate) -> Unit,
+    onPlayNext: (MediaCandidate) -> Unit,
+    onAddToQueue: (MediaCandidate) -> Unit,
+    onLocalPlay: (MediaCandidate) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var detailsVisible by remember(candidate.id) { mutableStateOf(false) }
+    val context = LocalContext.current
     val disabled = candidate.isDrm || candidate.unavailableReason != null
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -114,6 +131,8 @@ private fun CandidateCard(
                 MetaChip(format(candidate))
                 resolution(candidate)?.let { MetaChip(it) }
                 candidate.bandwidth?.let { MetaChip(formatBitrate(it)) }
+                candidate.durationMs?.takeIf { it > 0 }?.let { MetaChip(formatDuration(it)) }
+                if (candidate.subtitleTracks.isNotEmpty()) MetaChip("${candidate.subtitleTracks.size} SUB")
                 MetaChip(if (candidate.isLive) "LIVE" else if (candidate.isMasterPlaylist) "AUTO" else "VOD")
             }
             if (candidate.host.isNotBlank()) {
@@ -155,10 +174,31 @@ private fun CandidateCard(
                 TextButton(onClick = { onCastViaRelay(candidate) }, enabled = !disabled) {
                     Text("Caster via le telephone")
                 }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { onPlayNext(candidate) }, enabled = !disabled && castState.hasMedia) {
+                        Icon(Icons.Rounded.PlayArrow, null)
+                        Text(" Lire ensuite")
+                    }
+                    TextButton(onClick = { onAddToQueue(candidate) }, enabled = !disabled && castState.hasMedia) {
+                        Icon(Icons.AutoMirrored.Rounded.QueueMusic, null)
+                        Text(" File")
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { onLocalPlay(candidate) }, enabled = !disabled) {
+                        Text("Lire sur le telephone")
+                    }
+                    TextButton(onClick = {
+                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        clipboard.setPrimaryClip(
+                            android.content.ClipData.newPlainText("CASTER diagnostic", DiagnosticBuilder.build(candidate, castState))
+                        )
+                    }) { Text("Copier diagnostic") }
+                }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { detailsVisible = !detailsVisible }) {
-                    Text(if (detailsVisible) "Masquer l'URL" else "Details")
+                    Text(if (detailsVisible) "Masquer" else "Details")
                     Icon(if (detailsVisible) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
                 }
                 Button(onClick = { onCast(candidate) }, enabled = !disabled) {
@@ -202,4 +242,13 @@ private fun formatBitrate(bitsPerSecond: Long): String = if (bitsPerSecond >= 1_
     String.format(Locale.US, "%.1f Mb/s", bitsPerSecond / 1_000_000.0)
 } else {
     "${bitsPerSecond / 1_000} kb/s"
+}
+
+private fun formatDuration(milliseconds: Long): String {
+    val total = milliseconds / 1_000
+    val hours = total / 3_600
+    val minutes = total / 60 % 60
+    val seconds = total % 60
+    return if (hours > 0) String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+    else String.format(Locale.US, "%d:%02d", minutes, seconds)
 }

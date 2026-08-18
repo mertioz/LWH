@@ -1,5 +1,6 @@
 package com.local.webcaster.adblock
 
+import com.local.webcaster.data.SitePreferences
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -76,5 +77,26 @@ class SimpleAdBlockEngineTest {
                 )
             )
         )
+    }
+
+    @Test fun siteCanBlockTrackersWithoutBlockingAdsAndViceVersa() {
+        val rules = FilterRules(
+            blockedDomains = setOf("ads.example"),
+            allowedDomains = emptySet(),
+            thirdPartyBlockedDomains = setOf("tracker.example"),
+        )
+        val trackerOnly = SimpleAdBlockEngine(
+            rules, { true }, { _, _ -> },
+            { SitePreferences(ads = false, trackers = true) },
+        )
+        assertTrue(trackerOnly.shouldBlock(AdBlockRequest("https://tracker.example/pixel", "https://site.example")))
+        assertFalse(trackerOnly.shouldBlock(AdBlockRequest("https://ads.example/banner", "https://site.example")))
+
+        val adsOnly = SimpleAdBlockEngine(
+            rules, { true }, { _, _ -> },
+            { SitePreferences(ads = true, trackers = false) },
+        )
+        assertFalse(adsOnly.shouldBlock(AdBlockRequest("https://tracker.example/pixel", "https://site.example")))
+        assertTrue(adsOnly.shouldBlock(AdBlockRequest("https://ads.example/banner", "https://site.example")))
     }
 }

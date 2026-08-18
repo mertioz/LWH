@@ -3,6 +3,7 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".LocalWebCasterApp"
@@ -26,11 +27,24 @@
             android:theme="@style/Theme.LocalWebCaster" />
 
         <activity
+            android:name=".player.LocalPlayerActivity"
+            android:configChanges="orientation|screenLayout|screenSize|smallestScreenSize"
+            android:exported="false"
+            android:supportsPictureInPicture="true"
+            android:theme="@style/Theme.LocalWebCaster" />
+
+        <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
     </application>

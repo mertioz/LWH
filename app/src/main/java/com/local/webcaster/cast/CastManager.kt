@@ -1,9 +1,12 @@
 package com.local.webcaster.cast
 
 import android.app.Activity
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import com.google.android.gms.cast.MediaSeekOptions
 import com.google.android.gms.cast.MediaStatus
+import com.google.android.gms.cast.MediaQueueItem
+import com.google.android.gms.cast.MediaTrack
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastSession
 import com.google.android.gms.cast.framework.CastState
@@ -34,15 +37,41 @@ data class CastUiState(
     val deviceName: String? = null,
     val hasMedia: Boolean = false,
     val title: String? = null,
+    val domain: String? = null,
+    val artworkUrl: String? = null,
     val playing: Boolean = false,
     val buffering: Boolean = false,
     val positionMs: Long = 0,
     val durationMs: Long = 0,
+    val volume: Float = 1f,
+    val receiverState: String = "idle",
+    val deliveryMode: String = "none",
+    val relayState: String = "stopped",
+    val fallbackReason: String? = null,
+    val startupTimeMs: Long? = null,
+    val lastHttpStatus: Int? = null,
+    val subtitles: List<CastSubtitle> = emptyList(),
+    val queue: List<CastQueueEntry> = emptyList(),
     val message: String? = null,
 ) {
     val showController: Boolean
         get() = hasMedia && (connected || reconnecting)
 }
+
+data class CastSubtitle(
+    val id: Long,
+    val label: String,
+    val language: String? = null,
+    val active: Boolean = false,
+)
+
+data class CastQueueEntry(
+    val itemId: Int,
+    val title: String,
+    val domain: String? = null,
+    val current: Boolean = false,
+    val queueIndex: Int = 0,
+)
 
 class CastManager(
     activity: Activity,
@@ -71,6 +100,8 @@ class CastManager(
     private var released = false
     private var sessionEnding = false
     private var loadSequence = 0L
+    private val knownCandidates = linkedMapOf<String, MediaCandidate>()
+    private var loadStartedAtElapsed = 0L
 
     private val castStateListener = CastStateListener { castState ->
         val session = sessionManager?.currentCastSession
@@ -95,6 +126,7 @@ class CastManager(
     private val remoteCallback = object : RemoteMediaClient.Callback() {
         override fun onStatusUpdated() {
             val status = registeredRemote?.mediaStatus
+            adoptRemoteContentIfStable()
             val statusMatchesLoad = activeContentId == null ||
                 registeredRemote?.mediaInfo?.contentId == activeContentId
             SafeLogger.debug(
@@ -107,8 +139,12 @@ class CastManager(
             }
             if (status?.playerState == MediaStatus.PLAYER_STATE_IDLE) {
                 if (relayRetryInFlight || loadInFlight) return
+                if (status.loadingItemId != MediaQueueItem.INVALID_ITEM_ID) {
+                    updateRemoteState()
+                    return
+                }
                 if (status.idleReason == MediaStatus.IDLE_REASON_ERROR) {
-                    if (!tryRelayAfterDirectFailure()) {
+                    if (!tryRelayAfterDirectFailure("receiver_error")) {
                         clearMediaState(
                             endSession = true,
                             statusMessage = "La TV a refuse ce media: lien expire, acces requis ou format/codec incompatible.",
@@ -129,6 +165,7 @@ class CastManager(
         }
 
         override fun onMetadataUpdated() = updateRemoteState()
+        override fun onQueueStatusUpdated() = updateRemoteState()
     }
 
     private val sessionListener = object : SessionManagerListener<CastSession> {
@@ -192,6 +229,7 @@ class CastManager(
             return
         }
         pendingCandidate = candidate
+        rememberCandidate(candidate)
         pendingForceRelay = forceRelay || candidate.relayRequired
         val manager = sessionManager
         when {
@@ -209,6 +247,43 @@ class CastManager(
 
     fun seek(positionMs: Long) {
         registeredRemote?.seek(MediaSeekOptions.Builder().setPosition(positionMs.coerceAtLeast(0)).build())
+    }
+
+    fun setVolume(volume: Float) {
+        runCatching {
+            sessionManager?.currentCastSession?.setVolume(volume.coerceIn(0f, 1f).toDouble())
+            _state.value = _state.value.copy(volume = volume.coerceIn(0f, 1f))
+        }.onFailure { message("Le volume de l'appareil Cast n'a pas pu etre modifie.") }
+    }
+
+    fun setSubtitle(trackId: Long?) {
+        val client = registeredRemote ?: return
+        client.setActiveMediaTracks(trackId?.let { longArrayOf(it) } ?: longArrayOf())
+            .setResultCallback { result ->
+                if (!result.status.isSuccess) message("La piste de sous-titres n'a pas pu etre activee.")
+            }
+    }
+
+    fun playNext(candidate: MediaCandidate) = enqueue(candidate, playNext = true)
+
+    fun addToQueue(candidate: MediaCandidate) = enqueue(candidate, playNext = false)
+
+    fun removeQueueItem(itemId: Int) {
+        registeredRemote?.queueRemoveItem(itemId, null)
+    }
+
+    fun clearUpcomingQueue() {
+        val current = registeredRemote?.mediaStatus?.currentItemId ?: return
+        val ids = _state.value.queue.filterNot { it.itemId == current }.map { it.itemId }.toIntArray()
+        if (ids.isNotEmpty()) registeredRemote?.queueRemoveItems(ids, null)
+    }
+
+    fun playQueueItem(itemId: Int) {
+        registeredRemote?.queueJumpToItem(itemId, null)
+    }
+
+    fun moveQueueItem(itemId: Int, newIndex: Int) {
+        registeredRemote?.queueMoveItemToNewIndex(itemId, newIndex.coerceAtLeast(0), null)
     }
 
     fun stopMedia() {
@@ -275,6 +350,7 @@ class CastManager(
     }
 
     private fun disconnected(message: String? = null) {
+        val previousState = _state.value
         sessionEnding = false
         registeredRemote?.unregisterCallback(remoteCallback)
         registeredRemote = null
@@ -289,10 +365,17 @@ class CastManager(
         loadInFlight = false
         activeContentId = null
         playbackStarted = false
+        loadStartedAtElapsed = 0L
         loadSequence++
+        knownCandidates.clear()
         _state.value = CastUiState(
             frameworkAvailable = castContext != null,
             devicesAvailable = castContext?.castState != CastState.NO_DEVICES_AVAILABLE,
+            deliveryMode = previousState.deliveryMode,
+            relayState = "stopped",
+            fallbackReason = previousState.fallbackReason,
+            startupTimeMs = previousState.startupTimeMs,
+            lastHttpStatus = previousState.lastHttpStatus,
             message = message,
         )
     }
@@ -303,9 +386,11 @@ class CastManager(
         pendingCandidate = null
         pendingForceRelay = false
         activeCandidate = candidate
+        rememberCandidate(candidate)
         activeLoadRelayed = overrideUrl != null
         activeContentId = overrideUrl ?: candidate.resolvedUrl
         playbackStarted = false
+        loadStartedAtElapsed = SystemClock.elapsedRealtime()
         loadInFlight = true
         if (overrideUrl == null) {
             relay.stop()
@@ -319,10 +404,18 @@ class CastManager(
         _state.value = _state.value.copy(
             hasMedia = true,
             title = candidate.title ?: candidate.host.takeIf(String::isNotBlank) ?: "Media web",
+            domain = candidate.host.takeIf(String::isNotBlank),
+            artworkUrl = candidate.posterUrl,
             playing = false,
             buffering = true,
             positionMs = startPositionMs,
             durationMs = 0,
+            deliveryMode = if (overrideUrl == null) "direct" else "relay",
+            relayState = if (overrideUrl == null) "stopped" else "running",
+            receiverState = "loading",
+            startupTimeMs = null,
+            fallbackReason = if (overrideUrl == null) null else _state.value.fallbackReason,
+            lastHttpStatus = candidate.lastHttpStatus,
         )
         SafeLogger.debug(
             "CAST_LOAD mode=${if (overrideUrl == null) "direct" else "relay"} type=${candidate.mediaType} " +
@@ -347,7 +440,7 @@ class CastManager(
                     "CAST_ERROR load mode=direct code=${result.status.statusCode} " +
                         "message=${result.status.statusMessage.orEmpty().take(160)}"
                 )
-                if (!tryRelayAfterDirectFailure()) {
+                if (!tryRelayAfterDirectFailure("direct_rejected_${result.status.statusCode}")) {
                     clearMediaState(endSession = true, statusMessage = "Lecture Cast impossible.")
                 }
             } else {
@@ -363,11 +456,12 @@ class CastManager(
         }
     }
 
-    private fun tryRelayAfterDirectFailure(): Boolean {
+    private fun tryRelayAfterDirectFailure(reason: String = "direct_load_failed"): Boolean {
         val candidate = activeCandidate ?: return false
         if (relayAttempted || candidate.isDrm || candidate.unavailableReason != null) {
             return relayRetryInFlight
         }
+        _state.value = _state.value.copy(fallbackReason = reason.take(200), relayState = "starting")
         startRelay(candidate, if (playbackStarted) _state.value.positionMs else 0)
         return true
     }
@@ -381,6 +475,7 @@ class CastManager(
         relayAttempted = true
         relayRetryInFlight = true
         loadInFlight = true
+        _state.value = _state.value.copy(relayState = "starting")
         message("Tentative securisee via le telephone...")
         SafeLogger.debug(
             "MEDIA_RELAY selected type=${candidate.mediaType} url=${SafeLogger.redactedUrl(candidate.resolvedUrl)}"
@@ -408,9 +503,12 @@ class CastManager(
 
     private fun updateRemoteState() {
         val client = registeredRemote ?: return
+        adoptRemoteContentIfStable()
         val status = client.mediaStatus
         val statusMatchesLoad = activeContentId == null || client.mediaInfo?.contentId == activeContentId
         val playerState = status?.playerState
+        val remoteContentId = client.mediaInfo?.contentId
+        knownCandidates[remoteContentId]?.let { activeCandidate = it }
         if (statusMatchesLoad &&
             (playerState == MediaStatus.PLAYER_STATE_PLAYING || playerState == MediaStatus.PLAYER_STATE_PAUSED)
         ) {
@@ -418,21 +516,70 @@ class CastManager(
             loadInFlight = false
             relayRetryInFlight = false
             playbackWatchdogJob?.cancel()
+            if (_state.value.startupTimeMs == null && loadStartedAtElapsed > 0L) {
+                _state.value = _state.value.copy(
+                    startupTimeMs = (SystemClock.elapsedRealtime() - loadStartedAtElapsed).coerceAtLeast(0L)
+                )
+            }
         }
         val pendingPlayback = activeCandidate != null &&
             (!statusMatchesLoad || playbackWatchdogJob?.isActive == true)
+        val metadata = client.mediaInfo?.metadata
+        val activeTrackIds = status?.activeTrackIds?.toSet().orEmpty()
+        val subtitles = client.mediaInfo?.mediaTracks.orEmpty()
+            .filter { it.type == MediaTrack.TYPE_TEXT }
+            .map { track ->
+                CastSubtitle(
+                    id = track.id,
+                    label = track.name?.takeIf(String::isNotBlank)
+                        ?: track.language?.takeIf(String::isNotBlank)
+                        ?: "Subtitles",
+                    language = track.language,
+                    active = track.id in activeTrackIds,
+                )
+            }
+        val currentItem = status?.currentItemId ?: MediaQueueItem.INVALID_ITEM_ID
+        val allQueueItems = status?.queueItems.orEmpty()
+        val currentQueueIndex = allQueueItems.indexOfFirst { it.itemId == currentItem }.coerceAtLeast(0)
+        val queue = allQueueItems.drop(currentQueueIndex).mapIndexed { offset, item ->
+            val itemMetadata = item.media?.metadata
+            CastQueueEntry(
+                itemId = item.itemId,
+                title = itemMetadata?.getString(com.google.android.gms.cast.MediaMetadata.KEY_TITLE)
+                    ?: "Media web",
+                domain = itemMetadata?.getString(com.google.android.gms.cast.MediaMetadata.KEY_SUBTITLE),
+                current = item.itemId == currentItem,
+                queueIndex = currentQueueIndex + offset,
+            )
+        }
+        val receiverState = when (playerState) {
+            MediaStatus.PLAYER_STATE_PLAYING -> "playing"
+            MediaStatus.PLAYER_STATE_PAUSED -> "paused"
+            MediaStatus.PLAYER_STATE_BUFFERING -> "buffering"
+            MediaStatus.PLAYER_STATE_LOADING -> "loading"
+            else -> "idle"
+        }
         _state.value = _state.value.copy(
             connected = true,
             reconnecting = false,
             hasMedia = statusMatchesLoad && status != null && status.playerState != MediaStatus.PLAYER_STATE_IDLE || pendingPlayback,
             title = if (statusMatchesLoad) {
-                client.mediaInfo?.metadata?.getString(com.google.android.gms.cast.MediaMetadata.KEY_TITLE)
+                metadata?.getString(com.google.android.gms.cast.MediaMetadata.KEY_TITLE)
                     ?: _state.value.title
             } else _state.value.title,
+            domain = metadata?.getString(com.google.android.gms.cast.MediaMetadata.KEY_SUBTITLE)
+                ?: activeCandidate?.host?.takeIf(String::isNotBlank),
+            artworkUrl = activeCandidate?.posterUrl ?: _state.value.artworkUrl,
             playing = statusMatchesLoad && status?.playerState == MediaStatus.PLAYER_STATE_PLAYING,
             buffering = statusMatchesLoad && status?.playerState == MediaStatus.PLAYER_STATE_BUFFERING || pendingPlayback,
             positionMs = if (statusMatchesLoad) client.approximateStreamPosition.coerceAtLeast(0) else _state.value.positionMs,
             durationMs = if (statusMatchesLoad) client.streamDuration.coerceAtLeast(0) else _state.value.durationMs,
+            volume = runCatching { sessionManager?.currentCastSession?.volume?.toFloat() }.getOrNull()
+                ?: _state.value.volume,
+            receiverState = receiverState,
+            subtitles = subtitles,
+            queue = queue,
+            lastHttpStatus = relay.lastStatusCode ?: activeCandidate?.lastHttpStatus,
         )
     }
 
@@ -448,6 +595,8 @@ class CastManager(
         loadInFlight = false
         activeContentId = null
         playbackStarted = false
+        loadStartedAtElapsed = 0L
+        knownCandidates.clear()
         _state.value = _state.value.copy(
             hasMedia = false,
             title = null,
@@ -455,6 +604,12 @@ class CastManager(
             buffering = false,
             positionMs = 0,
             durationMs = 0,
+            domain = null,
+            artworkUrl = null,
+            receiverState = "idle",
+            relayState = "stopped",
+            subtitles = emptyList(),
+            queue = emptyList(),
             message = statusMessage ?: _state.value.message,
         )
         if (endSession && !sessionEnding) {
@@ -493,7 +648,7 @@ class CastManager(
                 "CAST_ERROR reason=$reason mode=${if (relayed) "relay" else "direct"} " +
                     "player=${status?.playerState ?: "none"} idle=${status?.idleReason ?: "none"}"
             )
-            if (!relayed && tryRelayAfterDirectFailure()) return@launch
+            if (!relayed && tryRelayAfterDirectFailure(reason)) return@launch
             clearMediaState(
                 endSession = true,
                 statusMessage = if (relayed) {
@@ -509,9 +664,71 @@ class CastManager(
         _state.value = _state.value.copy(message = text)
     }
 
+    private fun enqueue(candidate: MediaCandidate, playNext: Boolean) {
+        if (candidate.isDrm || candidate.unavailableReason != null) {
+            message(candidate.unavailableReason ?: "Ce flux protege ne peut pas etre ajoute a la file.")
+            return
+        }
+        val client = registeredRemote
+        if (client == null || !_state.value.hasMedia) {
+            cast(candidate)
+            return
+        }
+        rememberCandidate(candidate)
+        val item = MediaQueueItem.Builder(CastMediaLoader.mediaInfo(candidate))
+            .setAutoplay(true)
+            .setPreloadTime(10.0)
+            .build()
+        val request = if (playNext) {
+            val status = client.mediaStatus
+            val items = status?.queueItems.orEmpty()
+            val currentIndex = items.indexOfFirst { it.itemId == status?.currentItemId }
+            val beforeId = items.getOrNull(currentIndex + 1)?.itemId ?: MediaQueueItem.INVALID_ITEM_ID
+            client.queueInsertItems(arrayOf(item), beforeId, null)
+        } else {
+            client.queueAppendItem(item, null)
+        }
+        request.setResultCallback { result ->
+            if (result.status.isSuccess) message(if (playNext) "Ajoute a Lire ensuite." else "Ajoute a la file Cast.")
+            else message("Impossible d'ajouter ce media a la file Cast.")
+        }
+    }
+
+    private fun adoptRemoteContentIfStable() {
+        if (loadInFlight || relayRetryInFlight || playbackWatchdogJob?.isActive == true) return
+        val remoteContentId = registeredRemote?.mediaInfo?.contentId ?: return
+        if (remoteContentId == activeContentId) return
+        if (activeContentId == null && relay.isRunning && activeCandidate != null) {
+            activeContentId = remoteContentId
+            activeLoadRelayed = true
+            _state.value = _state.value.copy(deliveryMode = "relay", relayState = "running")
+            return
+        }
+        activeContentId = remoteContentId
+        activeCandidate = knownCandidates[remoteContentId]
+        if (relay.isRunning) relay.stop()
+        activeLoadRelayed = false
+        playbackStarted = false
+        loadStartedAtElapsed = 0L
+        _state.value = _state.value.copy(
+            deliveryMode = "direct",
+            relayState = "stopped",
+            fallbackReason = null,
+            startupTimeMs = null,
+        )
+    }
+
+    private fun rememberCandidate(candidate: MediaCandidate) {
+        knownCandidates[candidate.resolvedUrl] = candidate
+        while (knownCandidates.size > MAX_KNOWN_CANDIDATES) {
+            knownCandidates.remove(knownCandidates.keys.first())
+        }
+    }
+
     private companion object {
         const val DIRECT_START_TIMEOUT_MS = 18_000L
         const val RELAY_START_TIMEOUT_MS = 25_000L
         const val STALL_TIMEOUT_MS = 30_000L
+        const val MAX_KNOWN_CANDIDATES = 32
     }
 }

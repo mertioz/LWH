@@ -49,12 +49,15 @@ class LocalMediaRelay(context: Context) : MediaRelay {
     @Volatile private var session: RelaySession? = null
     @Volatile override var activeCandidate: MediaCandidate? = null
         private set
+    @Volatile override var lastStatusCode: Int? = null
+        private set
 
     override val isRunning: Boolean get() = server?.isAlive == true
 
     @Synchronized
     override fun start(candidate: MediaCandidate): Result<String> = runCatching {
         stop()
+        lastStatusCode = null
         val host = findLanAddress() ?: throw IllegalStateException(
             "Le telephone et l'appareil Cast doivent etre sur le meme reseau Wi-Fi pour utiliser le relay."
         )
@@ -80,6 +83,7 @@ class LocalMediaRelay(context: Context) : MediaRelay {
         server = null
         session = null
         activeCandidate = null
+        lastStatusCode = null
         registered.clear()
         targetIds.clear()
     }
@@ -168,6 +172,7 @@ class LocalMediaRelay(context: Context) : MediaRelay {
         )
         val opened = openUpstream(incoming, target)
         val upstream = opened.response
+        lastStatusCode = upstream.code
         val finalTarget = opened.target
         SafeLogger.debug(
             "RELAY_RESPONSE HTTP_STATUS=${upstream.code} type=${finalTarget.type} url=${SafeLogger.redactedUrl(finalTarget.url)}"

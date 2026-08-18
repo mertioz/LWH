@@ -31,14 +31,34 @@ object DetectionScript {
           const report = (value, source, mime, element, drm) => {
             const url = safeUrl(value);
             if (!url) return;
+            const mediaElement = element || document.querySelector('video,audio');
+            const poster = safeUrl(mediaElement && (mediaElement.poster || mediaElement.getAttribute && mediaElement.getAttribute('poster')));
+            const tracks = [];
+            try {
+              if (mediaElement && mediaElement.querySelectorAll) {
+                mediaElement.querySelectorAll('track[kind="subtitles"],track[kind="captions"]').forEach(track => {
+                  const trackUrl = safeUrl(track.src || track.getAttribute('src'));
+                  if (trackUrl && tracks.length < 32) tracks.push({
+                    url: trackUrl,
+                    label: String(track.label || track.srclang || 'Subtitles').slice(0, 100),
+                    language: String(track.srclang || '').slice(0, 35),
+                    mime: String(track.type || 'text/vtt').slice(0, 100),
+                    default: Boolean(track.default),
+                  });
+                });
+              }
+            } catch (_) {}
             send({
               url,
               source,
               mime: String(mime || '').slice(0, 200),
               title: String(document.title || '').slice(0, 500),
-              width: Number(element && element.videoWidth || 0),
-              height: Number(element && element.videoHeight || 0),
+              width: Number(mediaElement && mediaElement.videoWidth || 0),
+              height: Number(mediaElement && mediaElement.videoHeight || 0),
+              durationMs: Number.isFinite(mediaElement && mediaElement.duration) ? Math.round(mediaElement.duration * 1000) : 0,
               drm: Boolean(drm || pageUsesDrm),
+              poster,
+              tracks,
             });
           };
 
@@ -53,10 +73,11 @@ object DetectionScript {
 
           const scanNode = root => {
             const nodes = [];
-            if (root && root.matches && root.matches('video,audio,source')) nodes.push(root);
-            if (root && root.querySelectorAll) nodes.push(...root.querySelectorAll('video,audio,source'));
+            if (root && root.matches && root.matches('video,audio,source,track')) nodes.push(root);
+            if (root && root.querySelectorAll) nodes.push(...root.querySelectorAll('video,audio,source,track'));
             nodes.forEach(element => {
               if (element.matches('video,audio')) scanElement(element);
+              else if (element.matches('track')) scanElement(element.parentElement);
               else report(
                 element.src || element.getAttribute('src'),
                 'SOURCE_ELEMENT',
@@ -91,7 +112,7 @@ object DetectionScript {
                     return;
                   }
                   if ([...mutation.addedNodes].some(node => node.nodeType === 1 &&
-                      (node.matches?.('video,audio,source') || node.querySelector?.('video,audio,source')))) {
+                      (node.matches?.('video,audio,source,track') || node.querySelector?.('video,audio,source,track')))) {
                     relevant = true;
                   }
                 }
@@ -100,7 +121,7 @@ object DetectionScript {
                 subtree: true,
                 childList: true,
                 attributes: true,
-                attributeFilter: ['src', 'type'],
+                attributeFilter: ['src', 'type', 'poster', 'kind', 'srclang', 'label', 'default'],
               });
             } catch (_) {}
           };
@@ -151,6 +172,9 @@ object DetectionScript {
           };
           const scanPerformance = () => {
             try { performance.getEntriesByType('resource').forEach(inspectPerformanceEntry); } catch (_) {}
+          };
+          window.__localCasterRescan = () => {
+            try { scanNode(document); scanPerformance(); } catch (_) {}
           };
           try {
             new PerformanceObserver(list => list.getEntries().forEach(inspectPerformanceEntry))
