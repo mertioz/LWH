@@ -12,8 +12,7 @@ import com.local.webcaster.detection.MediaType
 object CastMediaLoader {
     fun request(candidate: MediaCandidate, overrideUrl: String? = null, startPositionMs: Long = 0): MediaLoadRequestData {
         val metadata = MediaMetadata(
-            if (candidate.mediaType == MediaType.AUDIO) MediaMetadata.MEDIA_TYPE_MUSIC_TRACK
-            else MediaMetadata.MEDIA_TYPE_MOVIE
+            metadataType(candidate)
         ).apply {
             putString(MediaMetadata.KEY_TITLE, candidate.title ?: candidate.host.ifBlank { "Média Web" })
             candidate.host.takeIf(String::isNotBlank)?.let { putString(MediaMetadata.KEY_SUBTITLE, it) }
@@ -41,8 +40,7 @@ object CastMediaLoader {
         metadataOverride: MediaMetadata? = null,
     ): MediaInfo {
         val metadata = metadataOverride ?: MediaMetadata(
-            if (candidate.mediaType == MediaType.AUDIO) MediaMetadata.MEDIA_TYPE_MUSIC_TRACK
-            else MediaMetadata.MEDIA_TYPE_MOVIE
+            metadataType(candidate)
         ).apply {
             putString(MediaMetadata.KEY_TITLE, candidate.title ?: candidate.host.ifBlank { "Média Web" })
             candidate.host.takeIf(String::isNotBlank)?.let { putString(MediaMetadata.KEY_SUBTITLE, it) }
@@ -53,6 +51,7 @@ object CastMediaLoader {
             .setStreamType(if (candidate.isLive) MediaInfo.STREAM_TYPE_LIVE else MediaInfo.STREAM_TYPE_BUFFERED)
             .setMetadata(metadata)
             .apply {
+                if (candidate.mediaType == MediaType.IMAGE) setStreamDuration(IMAGE_DISPLAY_DURATION_MS)
                 val tracks = candidate.subtitleTracks.mapIndexed { index, track ->
                     MediaTrack.Builder((index + 1).toLong(), MediaTrack.TYPE_TEXT)
                         .setContentId(track.url)
@@ -74,6 +73,7 @@ object CastMediaLoader {
         if (candidate.mediaType == MediaType.DASH) return "application/dash+xml"
         val observed = candidate.mimeType?.substringBefore(';')?.trim()
         if (!observed.isNullOrBlank() && (observed.startsWith("video/") || observed.startsWith("audio/") ||
+                observed.startsWith("image/") ||
                 observed.contains("mpegurl", true) || observed == "application/dash+xml")) return observed
         return when (candidate.mediaType) {
             MediaType.HLS -> "application/x-mpegURL"
@@ -81,7 +81,16 @@ object CastMediaLoader {
             MediaType.MP4 -> "video/mp4"
             MediaType.WEBM -> "video/webm"
             MediaType.AUDIO -> "audio/mpeg"
+            MediaType.IMAGE -> "image/jpeg"
             else -> "video/mp4"
         }
     }
+
+    private fun metadataType(candidate: MediaCandidate): Int = when (candidate.mediaType) {
+        MediaType.AUDIO -> MediaMetadata.MEDIA_TYPE_MUSIC_TRACK
+        MediaType.IMAGE -> MediaMetadata.MEDIA_TYPE_PHOTO
+        else -> MediaMetadata.MEDIA_TYPE_MOVIE
+    }
+
+    private const val IMAGE_DISPLAY_DURATION_MS = 24L * 60 * 60 * 1_000
 }

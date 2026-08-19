@@ -21,6 +21,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -71,7 +72,8 @@ class LocalPlayerActivity : AppCompatActivity() {
     private fun initializePlayer(candidate: MediaCandidate) {
         val headerContext = HeaderContext.from(candidate)
         val httpFactory = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
-        val dataSourceFactory = ResolvingDataSource.Factory(httpFactory) { dataSpec ->
+        val baseFactory = DefaultDataSource.Factory(this, httpFactory)
+        val dataSourceFactory = ResolvingDataSource.Factory(baseFactory) { dataSpec ->
             val destination = dataSpec.uri.toString()
             val headers = headerContext.forUrl(candidate.resolvedUrl, destination) { url ->
                 runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull()

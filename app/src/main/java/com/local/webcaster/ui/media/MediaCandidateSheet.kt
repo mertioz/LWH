@@ -241,6 +241,7 @@ private fun format(candidate: MediaCandidate): String = when (candidate.mediaTyp
     MediaType.MP4 -> "MP4"
     MediaType.WEBM -> "WEBM"
     MediaType.AUDIO -> "AUDIO"
+    MediaType.IMAGE -> "IMAGE"
     MediaType.BLOB -> "MEDIASOURCE"
     MediaType.VIDEO -> "VIDEO"
     MediaType.UNKNOWN -> "MEDIA"

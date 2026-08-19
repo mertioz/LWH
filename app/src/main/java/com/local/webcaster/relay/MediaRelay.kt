@@ -11,6 +11,7 @@ interface MediaRelay {
     val activeCandidate: MediaCandidate?
     val lastStatusCode: Int? get() = null
     fun hasNetworkChanged(): Boolean
+    fun setSelectedLocalMedia(uris: Set<String>) = Unit
 }
 
 data class HeaderContext(

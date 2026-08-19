@@ -54,6 +54,7 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
@@ -115,8 +116,11 @@ import com.local.webcaster.cast.CastUiState
 import com.local.webcaster.data.Bookmark
 import com.local.webcaster.data.HistoryEntry
 import com.local.webcaster.detection.MediaCandidate
+import com.local.webcaster.localmedia.LocalMediaItem
+import com.local.webcaster.localmedia.LocalMediaUiState
 import com.local.webcaster.ui.cast.CastMiniController
 import com.local.webcaster.ui.cast.CastQueueSheet
+import com.local.webcaster.ui.localmedia.LocalMediaScreen
 import com.local.webcaster.ui.media.MediaCandidateSheet
 
 @Composable
@@ -127,6 +131,7 @@ fun BrowserScreen(
     history: List<HistoryEntry>,
     frequent: List<HistoryEntry>,
     bookmarks: List<Bookmark>,
+    localMediaState: LocalMediaUiState,
     activeWebView: WebView?,
     onAddressChange: (String) -> Unit,
     onNavigate: () -> Unit,
@@ -138,7 +143,19 @@ fun BrowserScreen(
     onReturnToPage: () -> Unit,
     onShowHistory: () -> Unit,
     onShowBookmarks: () -> Unit,
+    onShowLocalMedia: () -> Unit,
     onShowSettings: () -> Unit,
+    onPickLocalMedia: () -> Unit,
+    onSelectLocalMedia: (Int) -> Unit,
+    onPreviousLocalMedia: () -> Unit,
+    onNextLocalMedia: () -> Unit,
+    onCastLocalMedia: (LocalMediaItem) -> Unit,
+    onPlayLocalMedia: (LocalMediaItem) -> Unit,
+    onPlayNextLocalMedia: (LocalMediaItem) -> Unit,
+    onQueueLocalMedia: (LocalMediaItem) -> Unit,
+    onLocalSlideshowEnabled: (Boolean) -> Unit,
+    onLocalSlideshowInterval: (Int) -> Unit,
+    onLocalSlideshowNext: () -> Unit,
     onNewTab: () -> Unit,
     onSwitchTab: (String) -> Unit,
     onCloseTab: (String) -> Unit,
@@ -241,6 +258,7 @@ fun BrowserScreen(
                 onHome = onHome,
                 onShowHistory = onShowHistory,
                 onShowBookmarks = onShowBookmarks,
+                onShowLocalMedia = onShowLocalMedia,
                 onShowSettings = onShowSettings,
                 onNewTab = onNewTab,
                 onShowTabs = { tabsOpen = true },
@@ -325,6 +343,22 @@ fun BrowserScreen(
                     onRemoveBookmark = onRemoveBookmark,
                     onShowHistory = onShowHistory,
                     onShowBookmarks = onShowBookmarks,
+                    onShowLocalMedia = onShowLocalMedia,
+                )
+                BrowserDestination.LOCAL_MEDIA -> LocalMediaScreen(
+                    state = localMediaState,
+                    castState = castState,
+                    onPickMedia = onPickLocalMedia,
+                    onSelect = onSelectLocalMedia,
+                    onPrevious = onPreviousLocalMedia,
+                    onNext = onNextLocalMedia,
+                    onCastNow = onCastLocalMedia,
+                    onLocalPlay = onPlayLocalMedia,
+                    onPlayNext = onPlayNextLocalMedia,
+                    onAddToQueue = onQueueLocalMedia,
+                    onSlideshowEnabled = onLocalSlideshowEnabled,
+                    onSlideshowInterval = onLocalSlideshowInterval,
+                    onSlideshowNext = onLocalSlideshowNext,
                 )
                 BrowserDestination.HISTORY -> HistoryContent(
                     history = history,
@@ -454,6 +488,7 @@ private fun BrowserToolbar(
     onHome: () -> Unit,
     onShowHistory: () -> Unit,
     onShowBookmarks: () -> Unit,
+    onShowLocalMedia: () -> Unit,
     onShowSettings: () -> Unit,
     onNewTab: () -> Unit,
     onShowTabs: () -> Unit,
@@ -473,18 +508,27 @@ private fun BrowserToolbar(
                 IconButton(onClick = onBack, enabled = state.destination != BrowserDestination.HOME) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Precedent")
                 }
-                AddressField(
-                    value = state.address,
-                    loading = state.loading,
-                    shieldEnabled = state.shieldEnabled,
-                    browserMode = state.destination == BrowserDestination.BROWSER,
-                    onValueChange = onAddressChange,
-                    onNavigate = onNavigate,
-                    onReload = onReload,
-                    onToggleShield = onToggleShield,
-                    focusManager = focusManager,
-                    modifier = Modifier.weight(1f),
-                )
+                if (state.destination == BrowserDestination.LOCAL_MEDIA) {
+                    Text(
+                        "Local Media",
+                        modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                } else {
+                    AddressField(
+                        value = state.address,
+                        loading = state.loading,
+                        shieldEnabled = state.shieldEnabled,
+                        browserMode = state.destination == BrowserDestination.BROWSER,
+                        onValueChange = onAddressChange,
+                        onNavigate = onNavigate,
+                        onReload = onReload,
+                        onToggleShield = onToggleShield,
+                        focusManager = focusManager,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
                 if (castState.frameworkAvailable == false) {
                     IconButton(onClick = {}, enabled = false) {
                         Icon(Icons.Rounded.Cast, "Google Cast indisponible")
@@ -530,6 +574,11 @@ private fun BrowserToolbar(
                             leadingIcon = { Icon(Icons.AutoMirrored.Rounded.ArrowForward, null) },
                             enabled = state.destination == BrowserDestination.BROWSER && state.canGoForward,
                             onClick = { menuOpen = false; onForward() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Local Media") },
+                            leadingIcon = { Icon(Icons.Rounded.PhotoLibrary, null) },
+                            onClick = { menuOpen = false; onShowLocalMedia() },
                         )
                         DropdownMenuItem(
                             text = { Text("Historique") },
@@ -631,6 +680,7 @@ private fun HomeContent(
     onRemoveBookmark: (String) -> Unit,
     onShowHistory: () -> Unit,
     onShowBookmarks: () -> Unit,
+    onShowLocalMedia: () -> Unit,
 ) {
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -673,6 +723,30 @@ private fun HomeContent(
                         onNavigate()
                     }),
                 )
+            }
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().clickable(onClick = onShowLocalMedia),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    shape = RoundedCornerShape(20.dp),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(18.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Rounded.PhotoLibrary, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Column(Modifier.weight(1f)) {
+                            Text("Local Media", fontWeight = FontWeight.Bold)
+                            Text(
+                                "Caster les photos et videos de ce telephone",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                        Icon(Icons.AutoMirrored.Rounded.ArrowForward, null)
+                    }
+                }
             }
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

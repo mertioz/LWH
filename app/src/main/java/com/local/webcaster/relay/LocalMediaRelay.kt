@@ -2,11 +2,14 @@ package com.local.webcaster.relay
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.Base64
 import android.webkit.CookieManager
 import com.local.webcaster.detection.MediaCandidate
 import com.local.webcaster.detection.MediaType
 import com.local.webcaster.detection.MediaUrlClassifier
+import com.local.webcaster.detection.SourceType
 import com.local.webcaster.security.UrlValidator
 import com.local.webcaster.security.PublicNetworkDns
 import com.local.webcaster.security.SafeLogger
@@ -18,6 +21,8 @@ import fi.iki.elonen.NanoHTTPD.Response
 import fi.iki.elonen.NanoHTTPD.newChunkedResponse
 import fi.iki.elonen.NanoHTTPD.newFixedLengthResponse
 import java.io.ByteArrayInputStream
+import java.io.FilterInputStream
+import java.io.InputStream
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.URI
@@ -43,6 +48,7 @@ class LocalMediaRelay(context: Context) : MediaRelay {
 
     private val registered = ConcurrentHashMap<String, RelayTarget>()
     private val targetIds = ConcurrentHashMap<String, String>()
+    private val selectedLocalMedia = ConcurrentHashMap.newKeySet<String>()
     private val rewriter = HlsRelayRewriter()
     private val dashRewriter = DashRelayRewriter()
     @Volatile private var server: RelayServer? = null
@@ -69,12 +75,12 @@ class LocalMediaRelay(context: Context) : MediaRelay {
         session = RelaySession(token, relayServer.listeningPort, host)
         activeCandidate = candidate
         SafeLogger.debug("MEDIA_RELAY start type=${candidate.mediaType} url=${SafeLogger.redactedUrl(candidate.resolvedUrl)}")
-        register(candidate.resolvedUrl, candidate.mediaType, HeaderContext.from(candidate))
+        register(candidate)
     }.onFailure { stop() }
 
     override fun createRelayUrl(candidate: MediaCandidate): Result<String> = runCatching {
         check(isRunning) { "Le relay local n'est pas demarre." }
-        register(candidate.resolvedUrl, candidate.mediaType, HeaderContext.from(candidate))
+        register(candidate)
     }
 
     @Synchronized
@@ -93,9 +99,45 @@ class LocalMediaRelay(context: Context) : MediaRelay {
         return findLanAddress() != active.hostAddress
     }
 
-    private fun register(url: String, type: MediaType, headers: HeaderContext): String {
+    override fun setSelectedLocalMedia(uris: Set<String>) {
+        selectedLocalMedia.clear()
+        selectedLocalMedia.addAll(uris)
+    }
+
+    private fun register(candidate: MediaCandidate): String {
+        val url = candidate.resolvedUrl
+        if (url.startsWith("content://")) {
+            return relayUrl(registerLocalTarget(candidate))
+        }
         require(UrlValidator.isValidMediaUrl(url)) { "Media URL refused by relay" }
-        return relayUrl(registerTarget(url, type, headers))
+        return relayUrl(registerTarget(url, candidate.mediaType, HeaderContext.from(candidate)))
+    }
+
+    private fun registerLocalTarget(candidate: MediaCandidate): String {
+        val uriText = candidate.resolvedUrl
+        require(candidate.sourceType == SourceType.LOCAL_PICKER && uriText in selectedLocalMedia) {
+            "Local media was not selected with the system picker"
+        }
+        val key = "LOCAL:$uriText"
+        targetIds[key]?.let { return it }
+        check(registered.size < MAX_REGISTERED_TARGETS) { "Too many registered relay targets" }
+        val uri = Uri.parse(uriText)
+        require(uri.scheme == "content") { "Only content URIs can be relayed as local media" }
+        val newId = UUID.randomUUID().toString().replace("-", "")
+        val id = targetIds.putIfAbsent(key, newId) ?: newId
+        registered.putIfAbsent(
+            id,
+            RelayTarget(
+                url = uriText,
+                type = candidate.mediaType,
+                headers = HeaderContext(),
+                allowRelative = false,
+                localUri = uri,
+                mimeType = candidate.mimeType,
+                knownSize = localSize(uri),
+            ),
+        )
+        return id
     }
 
     private fun registerChild(url: String, parent: RelayTarget, isPlaylist: Boolean): String {
@@ -158,7 +200,8 @@ class LocalMediaRelay(context: Context) : MediaRelay {
                 return newFixedLengthResponse(Response.Status.METHOD_NOT_ALLOWED, "text/plain", "")
             }
             return try {
-                proxy(request, target.forRequest(request, prefix, id))
+                if (target.localUri != null) localProxy(request, target)
+                else proxy(request, target.forRequest(request, prefix, id))
             } catch (error: Exception) {
                 SafeLogger.warn(
                     "CAST_ERROR relay=${error.javaClass.simpleName} url=${SafeLogger.redactedUrl(target.url)}",
@@ -167,6 +210,94 @@ class LocalMediaRelay(context: Context) : MediaRelay {
                 corsResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain; charset=utf-8", "Upstream unavailable")
             }
         }
+    }
+
+    private fun localProxy(incoming: IHTTPSession, target: RelayTarget): Response {
+        val uri = target.localUri ?: error("Missing local URI")
+        val size = target.knownSize ?: localSize(uri)
+        val requestedRange = incoming.headers["range"]
+        val range = size?.let { LocalByteRangeParser.parse(requestedRange, it) }
+        if (requestedRange != null && range == null) {
+            lastStatusCode = 416
+            return corsResponse(Response.Status.RANGE_NOT_SATISFIABLE, "text/plain", "").also {
+                if (size != null) it.addHeader("Content-Range", "bytes */$size")
+                it.addHeader("Accept-Ranges", "bytes")
+            }
+        }
+        val status = if (requestedRange != null) Response.Status.PARTIAL_CONTENT else Response.Status.OK
+        lastStatusCode = status.requestStatus
+        val mime = target.mimeType?.substringBefore(';')?.takeIf(String::isNotBlank)
+            ?: appContext.contentResolver.getType(uri)
+            ?: "application/octet-stream"
+        if (incoming.method == Method.HEAD) {
+            return newFixedLengthResponse(status, mime, "").also { response ->
+                addLocalHeaders(response, size, range, requestedRange != null)
+                addCorsHeaders(response)
+            }
+        }
+        val stream = openLocalStream(uri, range?.start ?: 0)
+        val response = when {
+            range != null -> newFixedLengthResponse(status, mime, LimitedInputStream(stream, range.length), range.length)
+            size != null -> newFixedLengthResponse(status, mime, LimitedInputStream(stream, size), size)
+            else -> newChunkedResponse(status, mime, stream)
+        }
+        addLocalHeaders(response, size, range, requestedRange != null)
+        addCorsHeaders(response)
+        SafeLogger.debug(
+            "RELAY_LOCAL_RESPONSE HTTP_STATUS=${status.requestStatus} mime=$mime range=${range?.start ?: 0}-${range?.endInclusive ?: "end"}"
+        )
+        return response
+    }
+
+    private fun addLocalHeaders(response: Response, size: Long?, range: LocalByteRange?, partial: Boolean) {
+        response.addHeader("Accept-Ranges", "bytes")
+        response.addHeader("Cache-Control", "no-store")
+        if (partial && range != null && size != null) {
+            response.addHeader("Content-Range", "bytes ${range.start}-${range.endInclusive}/$size")
+            response.addHeader("Content-Length", range.length.toString())
+        } else if (size != null) {
+            response.addHeader("Content-Length", size.toString())
+        }
+    }
+
+    private fun openLocalStream(uri: Uri, offset: Long): InputStream {
+        val stream = appContext.contentResolver.openAssetFileDescriptor(uri, "r")?.createInputStream()
+            ?: throw IllegalStateException("Selected media is no longer accessible")
+        return try {
+            skipFully(stream, offset)
+            stream
+        } catch (error: Throwable) {
+            stream.close()
+            throw error
+        }
+    }
+
+    private fun skipFully(stream: InputStream, byteCount: Long) {
+        var remaining = byteCount
+        while (remaining > 0) {
+            val skipped = stream.skip(remaining)
+            if (skipped > 0) {
+                remaining -= skipped
+            } else if (stream.read() >= 0) {
+                remaining--
+            } else {
+                throw IllegalStateException("Selected media ended before the requested range")
+            }
+        }
+    }
+
+    private fun localSize(uri: Uri): Long? {
+        val assetLength = runCatching {
+            appContext.contentResolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
+                descriptor.length.takeIf { it >= 0 }
+            }
+        }.getOrNull()
+        if (assetLength != null) return assetLength
+        return runCatching {
+            appContext.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0).takeIf { it >= 0 } else null
+            }
+        }.getOrNull()
     }
 
     private fun proxy(incoming: IHTTPSession, target: RelayTarget): Response {
@@ -365,6 +496,9 @@ class LocalMediaRelay(context: Context) : MediaRelay {
         val type: MediaType,
         val headers: HeaderContext,
         val allowRelative: Boolean,
+        val localUri: Uri? = null,
+        val mimeType: String? = null,
+        val knownSize: Long? = null,
     ) {
         fun forRequest(request: IHTTPSession, prefix: String, id: String): RelayTarget {
             if (!allowRelative) return this
@@ -393,6 +527,19 @@ class LocalMediaRelay(context: Context) : MediaRelay {
     }
 
     private data class OpenedUpstream(val response: OkResponse, val target: RelayTarget)
+
+    private class LimitedInputStream(input: InputStream, private var remaining: Long) : FilterInputStream(input) {
+        override fun read(): Int {
+            if (remaining <= 0) return -1
+            return super.read().also { if (it >= 0) remaining-- }
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            if (remaining <= 0) return -1
+            val allowed = length.toLong().coerceAtMost(remaining).toInt()
+            return super.read(buffer, offset, allowed).also { if (it > 0) remaining -= it }
+        }
+    }
 
     private companion object {
         const val MAX_MANIFEST_BYTES = 1_048_576

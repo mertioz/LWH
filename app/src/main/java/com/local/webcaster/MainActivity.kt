@@ -8,6 +8,7 @@ import android.os.Build
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -22,6 +23,8 @@ import androidx.mediarouter.app.MediaRouteButton
 import com.local.webcaster.cast.CastManager
 import com.local.webcaster.cast.ExpandedControlsActivity
 import com.local.webcaster.detection.QuickCastSelector
+import com.local.webcaster.localmedia.LocalMediaItem
+import com.local.webcaster.localmedia.LocalMediaViewModel
 import com.local.webcaster.player.LocalPlayerActivity
 import com.local.webcaster.security.SharedContentParser
 import com.local.webcaster.ui.browser.BrowserDestination
@@ -32,13 +35,21 @@ import com.local.webcaster.web.BrowserTabHost
 
 class MainActivity : AppCompatActivity() {
     private val viewModel by viewModels<BrowserViewModel>()
+    private val localMediaViewModel by viewModels<LocalMediaViewModel>()
     private var routeButton: MediaRouteButton? = null
     private lateinit var castManager: CastManager
     private lateinit var tabHost: BrowserTabHost
     private var activeWebView by mutableStateOf<WebView?>(null)
     private var notificationPermissionRequested = false
+    private var activeLocalCastId: String? = null
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) viewModel.notify("Les controles Cast resteront disponibles dans CASTER, sans notification systeme.")
+    }
+    private val localMediaPicker = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(100)) { uris ->
+        if (uris.isNotEmpty()) {
+            localMediaViewModel.setSelection(uris)
+            viewModel.showLocalMedia()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -66,6 +77,7 @@ class MainActivity : AppCompatActivity() {
                 val frequent by viewModel.frequent.collectAsState()
                 val bookmarks by viewModel.bookmarks.collectAsState()
                 val castState by castManager.state.collectAsState()
+                val localMediaState by localMediaViewModel.state.collectAsState()
 
                 LaunchedEffect(castState.connected) {
                     if (castState.connected) requestCastNotificationPermissionIfNeeded()
@@ -78,6 +90,7 @@ class MainActivity : AppCompatActivity() {
                     history = history,
                     frequent = frequent,
                     bookmarks = bookmarks,
+                    localMediaState = localMediaState,
                     activeWebView = activeWebView,
                     onAddressChange = viewModel::updateAddress,
                     onNavigate = {
@@ -97,7 +110,25 @@ class MainActivity : AppCompatActivity() {
                     onReturnToPage = viewModel::showCurrentPage,
                     onShowHistory = viewModel::showHistory,
                     onShowBookmarks = viewModel::showBookmarks,
+                    onShowLocalMedia = viewModel::showLocalMedia,
                     onShowSettings = viewModel::showSettings,
+                    onPickLocalMedia = {
+                        localMediaPicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                        )
+                    },
+                    onSelectLocalMedia = localMediaViewModel::select,
+                    onPreviousLocalMedia = { navigateLocalMedia(-1) },
+                    onNextLocalMedia = { navigateLocalMedia(1) },
+                    onCastLocalMedia = ::castLocalMedia,
+                    onPlayLocalMedia = { LocalPlayerActivity.start(this, it.candidate) },
+                    onPlayNextLocalMedia = { castManager.playNext(it.candidate) },
+                    onQueueLocalMedia = { castManager.addToQueue(it.candidate) },
+                    onLocalSlideshowEnabled = ::setLocalSlideshowEnabled,
+                    onLocalSlideshowInterval = localMediaViewModel::setSlideshowInterval,
+                    onLocalSlideshowNext = {
+                        localMediaViewModel.move(1, photosOnly = true)?.let(::castLocalMedia)
+                    },
                     onNewTab = { openNewTab(null) },
                     onSwitchTab = ::switchTab,
                     onCloseTab = ::closeTab,
@@ -136,13 +167,16 @@ class MainActivity : AppCompatActivity() {
                         tabHost.activeController?.clearBrowsingData { viewModel.notify("Donnees de navigation effacees.") }
                         app.mediaRepository.resetForPage("")
                     },
-                    onCast = castManager::cast,
-                    onCastViaRelay = { castManager.cast(it, forceRelay = true) },
+                    onCast = { activeLocalCastId = null; castManager.cast(it) },
+                    onCastViaRelay = { activeLocalCastId = null; castManager.cast(it, forceRelay = true) },
                     onQuickCast = {
                         if (!viewModel.state.value.sitePreferences.quickCast) {
                             viewModel.notify("Quick Cast est desactive pour ce site.")
                         } else {
-                            QuickCastSelector.select(viewModel.candidates.value)?.let(castManager::cast)
+                            QuickCastSelector.select(viewModel.candidates.value)?.let {
+                                activeLocalCastId = null
+                                castManager.cast(it)
+                            }
                                 ?: viewModel.notify("Aucun media compatible pour Quick Cast.")
                         }
                     },
@@ -169,7 +203,7 @@ class MainActivity : AppCompatActivity() {
                             startActivity(Intent(this, ExpandedControlsActivity::class.java))
                         }
                     },
-                    onCastStop = castManager::stopMedia,
+                    onCastStop = { activeLocalCastId = null; castManager.stopMedia() },
                     onMessageShown = viewModel::clearMessage,
                     onCastMessageShown = castManager::dismissMessage,
                 )
@@ -272,6 +306,28 @@ class MainActivity : AppCompatActivity() {
         ) return
         notificationPermissionRequested = true
         notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun castLocalMedia(item: LocalMediaItem) {
+        activeLocalCastId = item.candidate.id
+        castManager.cast(item.candidate, forceRelay = true)
+    }
+
+    private fun navigateLocalMedia(offset: Int) {
+        localMediaViewModel.move(offset)?.let { item ->
+            if (activeLocalCastId != null && castManager.state.value.let { it.connected && it.hasMedia }) {
+                castLocalMedia(item)
+            }
+        }
+    }
+
+    private fun setLocalSlideshowEnabled(enabled: Boolean) {
+        localMediaViewModel.setSlideshowEnabled(enabled)
+        if (!enabled) return
+        val state = localMediaViewModel.state.value
+        val photo = state.selected?.takeIf(LocalMediaItem::isPhoto)
+            ?: localMediaViewModel.move(1, photosOnly = true)
+        photo?.let(::castLocalMedia)
     }
 
     private companion object {

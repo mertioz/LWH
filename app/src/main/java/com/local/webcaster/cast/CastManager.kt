@@ -101,6 +101,7 @@ class CastManager(
     private var sessionEnding = false
     private var loadSequence = 0L
     private val knownCandidates = linkedMapOf<String, MediaCandidate>()
+    private val relayedContentIds = linkedSetOf<String>()
     private var loadStartedAtElapsed = 0L
 
     private val castStateListener = CastStateListener { castState ->
@@ -364,6 +365,7 @@ class CastManager(
         loadStartedAtElapsed = 0L
         loadSequence++
         knownCandidates.clear()
+        relayedContentIds.clear()
         _state.value = CastUiState(
             frameworkAvailable = castContext != null,
             devicesAvailable = castContext?.castState != CastState.NO_DEVICES_AVAILABLE,
@@ -385,6 +387,8 @@ class CastManager(
         rememberCandidate(candidate)
         activeLoadRelayed = overrideUrl != null
         activeContentId = overrideUrl ?: candidate.resolvedUrl
+        knownCandidates[activeContentId!!] = candidate
+        if (overrideUrl != null) relayedContentIds += overrideUrl
         playbackStarted = false
         loadStartedAtElapsed = SystemClock.elapsedRealtime()
         loadInFlight = true
@@ -594,6 +598,7 @@ class CastManager(
         playbackStarted = false
         loadStartedAtElapsed = 0L
         knownCandidates.clear()
+        relayedContentIds.clear()
         _state.value = _state.value.copy(
             hasMedia = false,
             title = null,
@@ -675,7 +680,17 @@ class CastManager(
             return
         }
         rememberCandidate(candidate)
-        val item = MediaQueueItem.Builder(CastMediaLoader.mediaInfo(candidate))
+        val relayUrl = if (candidate.relayRequired) {
+            val result = if (relay.isRunning) relay.createRelayUrl(candidate) else relay.start(candidate)
+            result.getOrElse {
+                message(it.message ?: "Relay local indisponible pour ce media.")
+                return
+            }.also {
+                knownCandidates[it] = candidate
+                relayedContentIds += it
+            }
+        } else null
+        val item = MediaQueueItem.Builder(CastMediaLoader.mediaInfo(candidate, relayUrl))
             .setAutoplay(true)
             .setPreloadTime(10.0)
             .build()
@@ -706,13 +721,13 @@ class CastManager(
         }
         activeContentId = remoteContentId
         activeCandidate = knownCandidates[remoteContentId]
-        if (relay.isRunning) relay.stop()
-        activeLoadRelayed = false
+        activeLoadRelayed = remoteContentId in relayedContentIds
+        if (relay.isRunning && !activeLoadRelayed) relay.stop()
         playbackStarted = false
         loadStartedAtElapsed = 0L
         _state.value = _state.value.copy(
-            deliveryMode = "direct",
-            relayState = "stopped",
+            deliveryMode = if (activeLoadRelayed) "relay" else "direct",
+            relayState = if (activeLoadRelayed) "running" else "stopped",
             fallbackReason = null,
             startupTimeMs = null,
         )

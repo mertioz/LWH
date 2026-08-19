@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.update
 import java.net.URI
 import java.util.UUID
 
-enum class BrowserDestination { BROWSER, HOME, HISTORY, BOOKMARKS, SETTINGS }
+enum class BrowserDestination { BROWSER, HOME, LOCAL_MEDIA, HISTORY, BOOKMARKS, SETTINGS }
 
 data class BrowserTab(
     val id: String,
@@ -99,6 +99,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
     fun showHistory() = mutateActive { it.copy(destination = BrowserDestination.HISTORY) }
     fun showBookmarks() = mutateActive { it.copy(destination = BrowserDestination.BOOKMARKS) }
+    fun showLocalMedia() = mutateActive { it.copy(destination = BrowserDestination.LOCAL_MEDIA) }
     fun showSettings() = mutateActive { it.copy(destination = BrowserDestination.SETTINGS) }
     fun showCurrentPage() = mutateActive {
         it.copy(destination = if (isHome(it.currentUrl)) BrowserDestination.HOME else BrowserDestination.BROWSER)
