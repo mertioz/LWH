@@ -88,9 +88,9 @@ object DetectionScript {
           };
 
           let scanTimer = 0;
-          const scheduleScan = root => {
+          const scheduleScan = () => {
             clearTimeout(scanTimer);
-            scanTimer = setTimeout(() => scanNode(root || document), 120);
+            scanTimer = setTimeout(() => scanNode(document), 120);
           };
 
           const installDomDetection = () => {
@@ -108,15 +108,15 @@ object DetectionScript {
                 let relevant = false;
                 for (const mutation of mutations) {
                   if (mutation.type === 'attributes') {
-                    scheduleScan(mutation.target);
-                    return;
+                    relevant = true;
+                    continue;
                   }
                   if ([...mutation.addedNodes].some(node => node.nodeType === 1 &&
                       (node.matches?.('video,audio,source,track') || node.querySelector?.('video,audio,source,track')))) {
                     relevant = true;
                   }
                 }
-                if (relevant) scheduleScan(document);
+                if (relevant) scheduleScan();
               }).observe(document.documentElement, {
                 subtree: true,
                 childList: true,
@@ -173,9 +173,20 @@ object DetectionScript {
           const scanPerformance = () => {
             try { performance.getEntriesByType('resource').forEach(inspectPerformanceEntry); } catch (_) {}
           };
-          window.__localCasterRescan = () => {
-            try { scanNode(document); scanPerformance(); } catch (_) {}
+          const rescan = () => {
+            try {
+              scanNode(document);
+              scanPerformance();
+              document.querySelectorAll('iframe,frame').forEach(frame => {
+                try { frame.contentWindow && frame.contentWindow.postMessage('__localCasterRescan', '*'); } catch (_) {}
+              });
+            } catch (_) {}
+            return true;
           };
+          window.__localCasterRescan = rescan;
+          window.addEventListener('message', event => {
+            if (event.data === '__localCasterRescan') rescan();
+          });
           try {
             new PerformanceObserver(list => list.getEntries().forEach(inspectPerformanceEntry))
               .observe({type: 'resource', buffered: true});

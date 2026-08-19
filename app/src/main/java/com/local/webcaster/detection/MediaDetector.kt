@@ -17,4 +17,8 @@ class MediaDetector(private val repository: MediaCandidateRepository) {
             )
         )?.also { onCandidate?.invoke(it) }
     }
+
+    fun beginRescan(pageUrl: String): Long? = repository.beginRescan(pageUrl)
+
+    fun finishRescan(id: Long, pageUrl: String) = repository.finishRescan(id, pageUrl)
 }

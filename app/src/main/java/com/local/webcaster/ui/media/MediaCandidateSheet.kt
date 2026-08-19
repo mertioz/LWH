@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -21,11 +22,14 @@ import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -54,7 +58,9 @@ import java.util.Locale
 fun MediaCandidateSheet(
     candidates: List<MediaCandidate>,
     castState: CastUiState,
+    isRescanning: Boolean,
     onDismiss: () -> Unit,
+    onRescan: () -> Unit,
     onCast: (MediaCandidate) -> Unit,
     onCastViaRelay: (MediaCandidate) -> Unit,
     onPlayNext: (MediaCandidate) -> Unit,
@@ -73,13 +79,21 @@ fun MediaCandidateSheet(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Icon(Icons.Rounded.Tv, null, tint = MaterialTheme.colorScheme.primary)
-            Column {
+            Column(Modifier.weight(1f)) {
                 Text("Videos detectees", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "${candidates.size} source${if (candidates.size > 1) "s" else ""} disponible${if (candidates.size > 1) "s" else ""}",
+                    if (isRescanning) "Analyse en cours..." else
+                        "${candidates.size} source${if (candidates.size > 1) "s" else ""} disponible${if (candidates.size > 1) "s" else ""}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            IconButton(onClick = onRescan, enabled = !isRescanning) {
+                if (isRescanning) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Rounded.Refresh, "Reanalyser les medias")
+                }
             }
         }
         Spacer(Modifier.height(12.dp))

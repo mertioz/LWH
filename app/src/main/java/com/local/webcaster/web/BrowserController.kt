@@ -31,6 +31,7 @@ class BrowserController(
 ) {
     private val mobileUserAgent = webView.settings.userAgentString.orEmpty()
     private lateinit var requestClient: BrowserWebViewClient
+    private var mediaRescanInProgress = false
     private val assetLoader = WebViewAssetLoader.Builder()
         .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
         .build()
@@ -191,8 +192,23 @@ class BrowserController(
         }
     }
 
-    fun rescanMedia() {
-        webView.evaluateJavascript("window.__localCasterRescan && window.__localCasterRescan()", null)
+    fun rescanMedia(onComplete: () -> Unit = {}) {
+        if (mediaRescanInProgress) {
+            onComplete()
+            return
+        }
+        mediaRescanInProgress = true
+        val pageUrl = webView.url.orEmpty()
+        val rescanId = detector.beginRescan(pageUrl)
+        webView.evaluateJavascript(
+            "Boolean(window.__localCasterRescan && window.__localCasterRescan())"
+        ) {
+            webView.postDelayed({
+                rescanId?.let { detector.finishRescan(it, pageUrl) }
+                mediaRescanInProgress = false
+                onComplete()
+            }, MEDIA_RESCAN_SETTLE_MS)
+        }
     }
 
     fun activateRequestInterception() {
@@ -217,6 +233,10 @@ class BrowserController(
         fun onTitle(title: String)
         fun onError(message: String)
         fun onRequestBlocked()
+    }
+
+    private companion object {
+        const val MEDIA_RESCAN_SETTLE_MS = 750L
     }
 
     private fun desktopUserAgent(value: String): String {

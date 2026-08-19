@@ -12,6 +12,8 @@ class MediaCandidateRepository {
     private val lock = Any()
     private val candidates = linkedMapOf<String, MediaCandidate>()
     private val staleUntil = linkedMapOf<String, Long>()
+    private var activeRescan: RescanSession? = null
+    private var nextRescanId = 0L
     private val _items = MutableStateFlow<List<MediaCandidate>>(emptyList())
     val items: StateFlow<List<MediaCandidate>> = _items.asStateFlow()
     @Volatile private var currentPageUrl: String = ""
@@ -24,6 +26,7 @@ class MediaCandidateRepository {
         staleUntil.entries.removeAll { it.value <= now }
         currentPageUrl = pageUrl
         currentPageStartedAt = now
+        activeRescan = null
         SafeLogger.debug("MEDIA_RESET page=${SafeLogger.redactedUrl(pageUrl)} quarantined=${staleUntil.size}")
         candidates.clear()
         _items.value = emptyList()
@@ -37,6 +40,24 @@ class MediaCandidateRepository {
     }
 
     fun currentPageUrl(): String = currentPageUrl
+
+    fun beginRescan(pageUrl: String): Long? = synchronized(lock) {
+        if (pageUrl.isBlank() || pageUrl != currentPageUrl || activeRescan != null) return null
+        val id = ++nextRescanId
+        activeRescan = RescanSession(id, pageUrl)
+        id
+    }
+
+    fun finishRescan(id: Long, pageUrl: String): Unit = synchronized(lock) {
+        val rescan = activeRescan?.takeIf { it.id == id && it.pageUrl == pageUrl } ?: return
+        activeRescan = null
+        val now = System.currentTimeMillis()
+        prune(now)
+        candidates.entries.removeAll { (key, candidate) ->
+            key !in rescan.seenKeys && candidate.discoverySources.all { it in DOM_RESCAN_SOURCES }
+        }
+        publish()
+    }
 
     fun add(observation: MediaObservation): MediaCandidate? {
         val blob = UrlValidator.isBlobMediaUrl(observation.url)
@@ -62,6 +83,7 @@ class MediaCandidateRepository {
                 return null
             }
             val previous = candidates[key]
+            activeRescan?.takeIf { it.pageUrl == currentPageUrl }?.seenKeys?.add(key)
             val sources = previous?.discoverySources.orEmpty() + observation.sourceType
             val source = preferredSource(sources)
             val mime = observation.mimeType ?: previous?.mimeType
@@ -147,10 +169,22 @@ class MediaCandidateRepository {
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
 
+    private data class RescanSession(
+        val id: Long,
+        val pageUrl: String,
+        val seenKeys: MutableSet<String> = linkedSetOf(),
+    )
+
     private companion object {
         const val MAX_CANDIDATES = 48
         const val MAX_CANDIDATE_AGE_MS = 30 * 60 * 1_000L
         const val DOCUMENT_CLOCK_TOLERANCE_MS = 1_000L
         const val STALE_NAVIGATION_GRACE_MS = 2 * 60 * 1_000L
+        val DOM_RESCAN_SOURCES = setOf(
+            SourceType.DOM,
+            SourceType.VIDEO_CURRENT_SRC,
+            SourceType.SOURCE_ELEMENT,
+            SourceType.ENCRYPTED_MEDIA,
+        )
     }
 }

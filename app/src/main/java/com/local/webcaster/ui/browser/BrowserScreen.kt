@@ -164,6 +164,7 @@ fun BrowserScreen(
     onPlayNext: (MediaCandidate) -> Unit,
     onAddToQueue: (MediaCandidate) -> Unit,
     onLocalPlay: (MediaCandidate) -> Unit,
+    onRescanMedia: (onComplete: () -> Unit) -> Unit,
     onCastButtonReady: (MediaRouteButton?) -> Unit,
     onCastToggle: () -> Unit,
     onCastSeek: (Long) -> Unit,
@@ -183,6 +184,7 @@ fun BrowserScreen(
     var protectionOpen by remember { mutableStateOf(false) }
     var queueOpen by remember { mutableStateOf(false) }
     var clearAction by remember { mutableStateOf<ClearAction?>(null) }
+    var mediaRescanInProgress by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val rootFocusManager = LocalFocusManager.current
     val rootKeyboard = LocalSoftwareKeyboardController.current
@@ -358,7 +360,14 @@ fun BrowserScreen(
         MediaCandidateSheet(
             candidates = candidates,
             castState = castState,
+            isRescanning = mediaRescanInProgress,
             onDismiss = { sheetOpen = false },
+            onRescan = {
+                if (!mediaRescanInProgress) {
+                    mediaRescanInProgress = true
+                    onRescanMedia { mediaRescanInProgress = false }
+                }
+            },
             onCast = { candidate ->
                 onCast(candidate)
                 if (candidate.unavailableReason == null && !candidate.isDrm) sheetOpen = false

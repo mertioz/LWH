@@ -63,4 +63,39 @@ class MediaCandidateRepositoryTest {
         )
         assertTrue(repository.items.value.isEmpty())
     }
+
+    @Test fun rescanRemovesMissingDomCandidatesButKeepsNetworkCandidates() {
+        val pageUrl = "https://site.test/watch"
+        val repository = MediaCandidateRepository()
+        repository.resetForPage(pageUrl)
+        repository.add(
+            MediaObservation(
+                url = "https://cdn.test/stale.mp4",
+                pageUrl = pageUrl,
+                sourceType = SourceType.VIDEO_CURRENT_SRC,
+            )
+        )
+        repository.add(
+            MediaObservation(
+                url = "https://cdn.test/network-only.m3u8",
+                pageUrl = pageUrl,
+                sourceType = SourceType.NETWORK,
+            )
+        )
+
+        val rescanId = requireNotNull(repository.beginRescan(pageUrl))
+        repository.add(
+            MediaObservation(
+                url = "https://cdn.test/current.mp4",
+                pageUrl = pageUrl,
+                sourceType = SourceType.DOM,
+            )
+        )
+        repository.finishRescan(rescanId, pageUrl)
+
+        assertEquals(
+            setOf("https://cdn.test/current.mp4", "https://cdn.test/network-only.m3u8"),
+            repository.items.value.map { it.resolvedUrl }.toSet(),
+        )
+    }
 }

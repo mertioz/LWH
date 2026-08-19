@@ -152,6 +152,9 @@ class MainActivity : AppCompatActivity() {
                         if (castManager.state.value.hasMedia) viewModel.notify("Arretez la lecture Cast avant de lancer la lecture locale.")
                         else LocalPlayerActivity.start(this, candidate)
                     },
+                    onRescanMedia = { onComplete ->
+                        tabHost.activeController?.rescanMedia(onComplete) ?: onComplete()
+                    },
                     onCastButtonReady = { routeButton = it },
                     onCastToggle = castManager::togglePlayPause,
                     onCastSeek = castManager::seek,
