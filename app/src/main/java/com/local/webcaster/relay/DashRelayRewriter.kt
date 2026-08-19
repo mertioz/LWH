@@ -4,6 +4,7 @@ import java.io.StringReader
 import java.io.StringWriter
 import java.net.URI
 import javax.xml.XMLConstants
+import javax.xml.parsers.DocumentBuilder
 import javax.xml.parsers.DocumentBuilderFactory
 import javax.xml.transform.OutputKeys
 import javax.xml.transform.TransformerFactory
@@ -16,16 +17,8 @@ data class DashRewriteResult(val text: String, val isDrm: Boolean)
 
 class DashRelayRewriter {
     fun rewrite(manifest: String, manifestUrl: String, relayUrlFor: (String) -> String): DashRewriteResult {
-        val factory = DocumentBuilderFactory.newInstance().apply {
-            isNamespaceAware = true
-            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-            setFeature("http://xml.org/sax/features/external-general-entities", false)
-            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-            setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
-            isXIncludeAware = false
-            isExpandEntityReferences = false
-        }
-        val document = factory.newDocumentBuilder().parse(InputSource(StringReader(manifest)))
+        require(!UNSAFE_XML.containsMatchIn(manifest)) { "DASH manifest declarations are not allowed" }
+        val document = secureDocumentBuilder().parse(InputSource(StringReader(manifest)))
         require(document.documentElement?.localName == "MPD" || document.documentElement?.nodeName == "MPD") {
             "Invalid DASH manifest"
         }
@@ -35,9 +28,11 @@ class DashRelayRewriter {
 
         rewriteTree(document.documentElement, manifestUrl, hasRelayedBase = false, relayUrlFor)
 
-        val transformer = TransformerFactory.newInstance().apply {
-            setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
-        }.newTransformer().apply {
+        val transformerFactory = TransformerFactory.newInstance()
+        runCatching { transformerFactory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true) }
+        runCatching { transformerFactory.setAttribute(ACCESS_EXTERNAL_DTD, "") }
+        runCatching { transformerFactory.setAttribute(ACCESS_EXTERNAL_STYLESHEET, "") }
+        val transformer = transformerFactory.newTransformer().apply {
             setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "no")
             setOutputProperty(OutputKeys.ENCODING, "UTF-8")
         }
@@ -85,7 +80,34 @@ class DashRelayRewriter {
 
     private fun resolve(base: String, child: String): String = URI(base).resolve(child).toASCIIString()
 
+    private fun secureDocumentBuilder(): DocumentBuilder {
+        val factory = DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = true
+            runCatching { isXIncludeAware = false }
+            runCatching { isExpandEntityReferences = false }
+        }
+        // Android XML providers differ in which hardening flags they implement. The lexical
+        // declaration rejection above and the blocking entity resolver remain mandatory; these
+        // provider flags add defense in depth without making valid MPDs unparseable on a device.
+        listOf(
+            "http://apache.org/xml/features/disallow-doctype-decl" to true,
+            "http://xml.org/sax/features/external-general-entities" to false,
+            "http://xml.org/sax/features/external-parameter-entities" to false,
+            "http://apache.org/xml/features/nonvalidating/load-external-dtd" to false,
+            XMLConstants.FEATURE_SECURE_PROCESSING to true,
+        ).forEach { (name, value) -> runCatching { factory.setFeature(name, value) } }
+        runCatching { factory.setAttribute(ACCESS_EXTERNAL_DTD, "") }
+        runCatching { factory.setAttribute(ACCESS_EXTERNAL_SCHEMA, "") }
+        return factory.newDocumentBuilder().apply {
+            setEntityResolver { _, _ -> InputSource(StringReader("")) }
+        }
+    }
+
     private companion object {
         val URL_ATTRIBUTES = listOf("media", "initialization", "sourceURL", "index")
+        val UNSAFE_XML = Regex("<!\\s*(?:DOCTYPE|ENTITY)\\b", RegexOption.IGNORE_CASE)
+        const val ACCESS_EXTERNAL_DTD = "http://javax.xml.XMLConstants/property/accessExternalDTD"
+        const val ACCESS_EXTERNAL_SCHEMA = "http://javax.xml.XMLConstants/property/accessExternalSchema"
+        const val ACCESS_EXTERNAL_STYLESHEET = "http://javax.xml.XMLConstants/property/accessExternalStylesheet"
     }
 }

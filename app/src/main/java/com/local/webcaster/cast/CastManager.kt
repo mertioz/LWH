@@ -156,11 +156,7 @@ class CastManager(
             } else {
                 relayRetryInFlight = false
                 updateRemoteState()
-                if (status?.playerState == MediaStatus.PLAYER_STATE_BUFFERING &&
-                    playbackWatchdogJob?.isActive != true
-                ) {
-                    schedulePlaybackWatchdog(loadSequence, activeLoadRelayed, STALL_TIMEOUT_MS)
-                }
+                ensureStallWatchdog(status?.playerState)
             }
         }
 
@@ -581,6 +577,7 @@ class CastManager(
             queue = queue,
             lastHttpStatus = relay.lastStatusCode ?: activeCandidate?.lastHttpStatus,
         )
+        ensureStallWatchdog(playerState)
     }
 
     private fun clearMediaState(endSession: Boolean, statusMessage: String? = null) {
@@ -639,11 +636,7 @@ class CastManager(
                 (status?.playerState == MediaStatus.PLAYER_STATE_PLAYING ||
                     status?.playerState == MediaStatus.PLAYER_STATE_PAUSED)
             ) return@launch
-            val reason = if (status?.playerState == MediaStatus.PLAYER_STATE_BUFFERING) {
-                "buffer_timeout"
-            } else {
-                "start_timeout"
-            }
+            val reason = CastWatchdogPolicy.timeoutReason(status?.playerState)
             SafeLogger.warn(
                 "CAST_ERROR reason=$reason mode=${if (relayed) "relay" else "direct"} " +
                     "player=${status?.playerState ?: "none"} idle=${status?.idleReason ?: "none"}"
@@ -658,6 +651,13 @@ class CastManager(
                 },
             )
         }
+    }
+
+    private fun ensureStallWatchdog(playerState: Int?) {
+        if (activeCandidate == null || loadInFlight || relayRetryInFlight ||
+            playbackWatchdogJob?.isActive == true || !CastWatchdogPolicy.isStalledState(playerState)
+        ) return
+        schedulePlaybackWatchdog(loadSequence, activeLoadRelayed, STALL_TIMEOUT_MS)
     }
 
     private fun message(text: String) {
@@ -730,5 +730,16 @@ class CastManager(
         const val RELAY_START_TIMEOUT_MS = 25_000L
         const val STALL_TIMEOUT_MS = 30_000L
         const val MAX_KNOWN_CANDIDATES = 32
+    }
+}
+
+internal object CastWatchdogPolicy {
+    fun isStalledState(playerState: Int?): Boolean = playerState == MediaStatus.PLAYER_STATE_LOADING ||
+        playerState == MediaStatus.PLAYER_STATE_BUFFERING
+
+    fun timeoutReason(playerState: Int?): String = when (playerState) {
+        MediaStatus.PLAYER_STATE_BUFFERING -> "buffer_timeout"
+        MediaStatus.PLAYER_STATE_LOADING -> "loading_timeout"
+        else -> "start_timeout"
     }
 }

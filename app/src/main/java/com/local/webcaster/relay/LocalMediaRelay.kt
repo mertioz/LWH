@@ -160,7 +160,10 @@ class LocalMediaRelay(context: Context) : MediaRelay {
             return try {
                 proxy(request, target.forRequest(request, prefix, id))
             } catch (error: Exception) {
-                SafeLogger.warn("CAST_ERROR relay=${error.javaClass.simpleName} url=${SafeLogger.redactedUrl(target.url)}")
+                SafeLogger.warn(
+                    "CAST_ERROR relay=${error.javaClass.simpleName} url=${SafeLogger.redactedUrl(target.url)}",
+                    error,
+                )
                 corsResponse(Response.Status.SERVICE_UNAVAILABLE, "text/plain; charset=utf-8", "Upstream unavailable")
             }
         }
@@ -168,14 +171,17 @@ class LocalMediaRelay(context: Context) : MediaRelay {
 
     private fun proxy(incoming: IHTTPSession, target: RelayTarget): Response {
         SafeLogger.debug(
-            "RELAY_REQUEST method=${incoming.method} type=${target.type} url=${SafeLogger.redactedUrl(target.url)}"
+            "RELAY_REQUEST method=${incoming.method} type=${target.type} " +
+                "range=${incoming.headers["range"] != null} url=${SafeLogger.redactedUrl(target.url)}"
         )
         val opened = openUpstream(incoming, target)
         val upstream = opened.response
         lastStatusCode = upstream.code
         val finalTarget = opened.target
         SafeLogger.debug(
-            "RELAY_RESPONSE HTTP_STATUS=${upstream.code} type=${finalTarget.type} url=${SafeLogger.redactedUrl(finalTarget.url)}"
+            "RELAY_RESPONSE HTTP_STATUS=${upstream.code} type=${finalTarget.type} " +
+                "mime=${upstream.header("Content-Type").orEmpty().substringBefore(';').take(80)} " +
+                "url=${SafeLogger.redactedUrl(finalTarget.url)}"
         )
         if (finalTarget.type == MediaType.HLS && incoming.method == Method.GET && upstream.isSuccessful) {
             return hlsResponse(upstream, finalTarget)

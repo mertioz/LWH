@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit
 import com.local.webcaster.security.SafeLogger
 import com.local.webcaster.security.PublicNetworkDns
 import com.local.webcaster.security.BoundedBodyReader
+import com.local.webcaster.cast.AdaptiveStreamCors
 
 class HlsCandidateEnricher(
     private val repository: MediaCandidateRepository,
@@ -65,11 +66,16 @@ class HlsCandidateEnricher(
                     val childManifest = manifest.variants.firstOrNull()?.let { variant ->
                         inspectVariant(candidate, finalManifestUrl, variant.url)
                     }
-                    val drm = manifest.isDrm || childManifest?.isDrm == true
-                    val live = manifest.isLive || childManifest?.isLive == true
+                    val drm = manifest.isDrm || childManifest?.manifest?.isDrm == true
+                    val live = manifest.isLive || childManifest?.manifest?.isLive == true
+                    val corsRelayRequired = AdaptiveStreamCors.requiresRelay(
+                        MediaType.HLS,
+                        response.headers.values("Access-Control-Allow-Origin"),
+                    ) || childManifest?.relayRequired == true
                     SafeLogger.debug(
                         "${if (manifest.isMaster) "HLS_MASTER" else "HLS_VARIANT"} " +
                             "live=$live variants=${manifest.variants.size} drm=$drm " +
+                            "cors_relay=$corsRelayRequired " +
                             "url=${SafeLogger.redactedUrl(finalManifestUrl)}"
                     )
                     repository.update(candidate.id) {
@@ -78,6 +84,7 @@ class HlsCandidateEnricher(
                             isMasterPlaylist = manifest.isMaster,
                             isLive = live,
                             isDrm = drm,
+                            relayRequired = it.relayRequired || corsRelayRequired,
                             confidence = if (drm) 1 else if (manifest.isMaster) 100 else 98,
                             subtitleTracks = (it.subtitleTracks + manifest.subtitles).distinctBy { track -> track.url },
                             lastHttpStatus = response.code,
@@ -131,10 +138,19 @@ class HlsCandidateEnricher(
             val drm = text.contains("ContentProtection", ignoreCase = true) ||
                 text.contains("edef8ba9-79d6-4ace-a3c8-27dcd51d21ed", ignoreCase = true) ||
                 text.contains("widevine", ignoreCase = true)
+            val corsRelayRequired = AdaptiveStreamCors.requiresRelay(
+                MediaType.DASH,
+                response.headers.values("Access-Control-Allow-Origin"),
+            )
+            SafeLogger.debug(
+                "DASH_MANIFEST drm=$drm cors_relay=$corsRelayRequired " +
+                    "url=${SafeLogger.redactedUrl(response.request.url.toString())}"
+            )
             repository.update(candidate.id) {
                 it.copy(
                     mimeType = response.header("Content-Type")?.substringBefore(';') ?: "application/dash+xml",
                     isDrm = drm,
+                    relayRequired = it.relayRequired || corsRelayRequired,
                     confidence = if (drm) 1 else 96,
                     lastHttpStatus = response.code,
                 )
@@ -142,7 +158,7 @@ class HlsCandidateEnricher(
         }
     }
 
-    private fun inspectVariant(candidate: MediaCandidate, parentUrl: String, variantUrl: String): HlsManifest? {
+    private fun inspectVariant(candidate: MediaCandidate, parentUrl: String, variantUrl: String): HlsInspection? {
         val headers = HeaderContext.from(candidate)
             .forUrl(parentUrl, variantUrl) { url ->
                 runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull()
@@ -155,10 +171,22 @@ class HlsCandidateEnricher(
             if (!response.isSuccessful) return@use null
             val source = response.body?.source() ?: return@use null
             val bytes = BoundedBodyReader.read(source, MAX_MANIFEST_BYTES) ?: return@use null
-            parser.parse(bytes.toString(Charsets.UTF_8), response.request.url.toString())
-                .takeIf(HlsManifest::isValid)
+            val manifest = parser.parse(bytes.toString(Charsets.UTF_8), response.request.url.toString())
+                .takeIf(HlsManifest::isValid) ?: return@use null
+            HlsInspection(
+                manifest = manifest,
+                relayRequired = AdaptiveStreamCors.requiresRelay(
+                    MediaType.HLS,
+                    response.headers.values("Access-Control-Allow-Origin"),
+                ),
+            )
         }
     }
+
+    private data class HlsInspection(
+        val manifest: HlsManifest,
+        val relayRequired: Boolean,
+    )
 
     private companion object {
         const val MAX_MANIFEST_BYTES = 1_048_576
