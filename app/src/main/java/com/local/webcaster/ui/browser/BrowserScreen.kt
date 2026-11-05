@@ -5,13 +5,17 @@ import android.webkit.WebView
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -74,6 +78,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -101,6 +106,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusManager
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -108,6 +116,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.mediarouter.app.MediaRouteButton
@@ -329,57 +338,64 @@ fun BrowserScreen(
                 },
                 modifier = Modifier.fillMaxSize(),
             )
-            when (state.destination) {
-                BrowserDestination.BROWSER -> Unit
-                BrowserDestination.HOME -> HomeContent(
-                    address = state.address,
-                    recent = history.take(8),
-                    frequent = frequent,
-                    bookmarks = bookmarks.take(8),
-                    onAddressChange = onAddressChange,
-                    onNavigate = onNavigate,
-                    onOpenUrl = onOpenUrl,
-                    onDeleteHistory = onDeleteHistory,
-                    onRemoveBookmark = onRemoveBookmark,
-                    onShowHistory = onShowHistory,
-                    onShowBookmarks = onShowBookmarks,
-                    onShowLocalMedia = onShowLocalMedia,
-                )
-                BrowserDestination.LOCAL_MEDIA -> LocalMediaScreen(
-                    state = localMediaState,
-                    castState = castState,
-                    onPickMedia = onPickLocalMedia,
-                    onSelect = onSelectLocalMedia,
-                    onPrevious = onPreviousLocalMedia,
-                    onNext = onNextLocalMedia,
-                    onCastNow = onCastLocalMedia,
-                    onLocalPlay = onPlayLocalMedia,
-                    onPlayNext = onPlayNextLocalMedia,
-                    onAddToQueue = onQueueLocalMedia,
-                    onSlideshowEnabled = onLocalSlideshowEnabled,
-                    onSlideshowInterval = onLocalSlideshowInterval,
-                    onSlideshowNext = onLocalSlideshowNext,
-                )
-                BrowserDestination.HISTORY -> HistoryContent(
-                    history = history,
-                    onOpenUrl = onOpenUrl,
-                    onDelete = onDeleteHistory,
-                    onClear = { clearAction = ClearAction.HISTORY },
-                )
-                BrowserDestination.BOOKMARKS -> BookmarksContent(
-                    bookmarks = bookmarks,
-                    onOpenUrl = onOpenUrl,
-                    onRemove = onRemoveBookmark,
-                    onRename = onRenameBookmark,
-                )
-                BrowserDestination.SETTINGS -> SettingsContent(
-                    blockPopups = state.blockPopups,
-                    onPopupSetting = onPopupSetting,
-                    onClearHistory = { clearAction = ClearAction.HISTORY },
-                    onClearCookies = { clearAction = ClearAction.COOKIES },
-                    onClearCache = { clearAction = ClearAction.CACHE },
-                    onClearAll = { clearAction = ClearAction.ALL },
-                )
+            AnimatedContent(
+                targetState = state.destination,
+                modifier = Modifier.fillMaxSize(),
+                transitionSpec = { fadeIn(tween(170)) togetherWith fadeOut(tween(110)) },
+                label = "Destination",
+            ) { destination ->
+                when (destination) {
+                    BrowserDestination.BROWSER -> Unit
+                    BrowserDestination.HOME -> HomeContent(
+                        address = state.address,
+                        recent = history.take(3),
+                        frequent = frequent.take(3),
+                        bookmarks = bookmarks.take(3),
+                        onAddressChange = onAddressChange,
+                        onNavigate = onNavigate,
+                        onOpenUrl = onOpenUrl,
+                        onDeleteHistory = onDeleteHistory,
+                        onRemoveBookmark = onRemoveBookmark,
+                        onShowHistory = onShowHistory,
+                        onShowBookmarks = onShowBookmarks,
+                        onShowLocalMedia = onShowLocalMedia,
+                    )
+                    BrowserDestination.LOCAL_MEDIA -> LocalMediaScreen(
+                        state = localMediaState,
+                        castState = castState,
+                        onPickMedia = onPickLocalMedia,
+                        onSelect = onSelectLocalMedia,
+                        onPrevious = onPreviousLocalMedia,
+                        onNext = onNextLocalMedia,
+                        onCastNow = onCastLocalMedia,
+                        onLocalPlay = onPlayLocalMedia,
+                        onPlayNext = onPlayNextLocalMedia,
+                        onAddToQueue = onQueueLocalMedia,
+                        onSlideshowEnabled = onLocalSlideshowEnabled,
+                        onSlideshowInterval = onLocalSlideshowInterval,
+                        onSlideshowNext = onLocalSlideshowNext,
+                    )
+                    BrowserDestination.HISTORY -> HistoryContent(
+                        history = history,
+                        onOpenUrl = onOpenUrl,
+                        onDelete = onDeleteHistory,
+                        onClear = { clearAction = ClearAction.HISTORY },
+                    )
+                    BrowserDestination.BOOKMARKS -> BookmarksContent(
+                        bookmarks = bookmarks,
+                        onOpenUrl = onOpenUrl,
+                        onRemove = onRemoveBookmark,
+                        onRename = onRenameBookmark,
+                    )
+                    BrowserDestination.SETTINGS -> SettingsContent(
+                        blockPopups = state.blockPopups,
+                        onPopupSetting = onPopupSetting,
+                        onClearHistory = { clearAction = ClearAction.HISTORY },
+                        onClearCookies = { clearAction = ClearAction.COOKIES },
+                        onClearCache = { clearAction = ClearAction.CACHE },
+                        onClearAll = { clearAction = ClearAction.ALL },
+                    )
+                }
             }
             if (state.loading && state.destination == BrowserDestination.BROWSER) {
                 LinearProgressIndicator(
@@ -498,32 +514,41 @@ private fun BrowserToolbar(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
-    Surface(tonalElevation = 2.dp, shadowElevation = 1.dp) {
+    Surface(color = MaterialTheme.colorScheme.surface) {
         Column {
             Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
             Row(
-                modifier = Modifier.fillMaxWidth().height(62.dp).padding(horizontal = 4.dp, vertical = 7.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = onBack, enabled = state.destination != BrowserDestination.HOME) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Precedent")
+                if (state.destination != BrowserDestination.HOME) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Retour")
+                    }
                 }
-                if (state.destination == BrowserDestination.LOCAL_MEDIA) {
+                if (state.destination != BrowserDestination.BROWSER) {
                     Text(
-                        "Local Media",
-                        modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold,
+                        when (state.destination) {
+                            BrowserDestination.HOME -> "CASTER"
+                            BrowserDestination.LOCAL_MEDIA -> "Médias locaux"
+                            BrowserDestination.HISTORY -> "Historique"
+                            BrowserDestination.BOOKMARKS -> "Favoris"
+                            BrowserDestination.SETTINGS -> "Réglages"
+                            BrowserDestination.BROWSER -> ""
+                        },
+                        modifier = Modifier.weight(1f).padding(start = 10.dp),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = if (state.destination == BrowserDestination.HOME) 2.sp else 0.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 } else {
                     AddressField(
                         value = state.address,
-                        loading = state.loading,
                         shieldEnabled = state.shieldEnabled,
-                        browserMode = state.destination == BrowserDestination.BROWSER,
                         onValueChange = onAddressChange,
                         onNavigate = onNavigate,
-                        onReload = onReload,
                         onToggleShield = onToggleShield,
                         focusManager = focusManager,
                         modifier = Modifier.weight(1f),
@@ -551,14 +576,29 @@ private fun BrowserToolbar(
                         onRelease = { onCastButtonReady(null) },
                     )
                 }
-                BadgedBox(badge = { Badge { Text(state.tabs.size.toString()) } }) {
-                    IconButton(onClick = onShowTabs) { Icon(Icons.Rounded.Tab, "Onglets") }
+                IconButton(onClick = onShowTabs) {
+                    if (state.tabs.size > 1) {
+                        BadgedBox(badge = { Badge { Text(state.tabs.size.toString()) } }) {
+                            Icon(Icons.Rounded.Tab, "Onglets")
+                        }
+                    } else {
+                        Icon(Icons.Rounded.Tab, "Onglets")
+                    }
                 }
                 Box {
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(Icons.Rounded.MoreVert, "Options")
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        if (state.destination == BrowserDestination.BROWSER) {
+                            DropdownMenuItem(
+                                text = { Text(if (state.loading) "Arrêter le chargement" else "Actualiser") },
+                                leadingIcon = {
+                                    Icon(if (state.loading) Icons.Rounded.Close else Icons.Rounded.Refresh, null)
+                                },
+                                onClick = { menuOpen = false; onReload() },
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("Nouvel onglet") },
                             leadingIcon = { Icon(Icons.Rounded.Tab, null) },
@@ -576,7 +616,7 @@ private fun BrowserToolbar(
                             onClick = { menuOpen = false; onForward() },
                         )
                         DropdownMenuItem(
-                            text = { Text("Local Media") },
+                            text = { Text("Médias locaux") },
                             leadingIcon = { Icon(Icons.Rounded.PhotoLibrary, null) },
                             onClick = { menuOpen = false; onShowLocalMedia() },
                         )
@@ -612,40 +652,34 @@ private fun BrowserToolbar(
 @Composable
 private fun AddressField(
     value: String,
-    loading: Boolean,
     shieldEnabled: Boolean,
-    browserMode: Boolean,
     onValueChange: (String) -> Unit,
     onNavigate: () -> Unit,
-    onReload: () -> Unit,
     onToggleShield: () -> Unit,
     focusManager: FocusManager,
     modifier: Modifier = Modifier,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
+    var focused by remember { mutableStateOf(false) }
+    val container by animateColorAsState(
+        targetValue = if (focused) MaterialTheme.colorScheme.surfaceContainerHigh
+        else MaterialTheme.colorScheme.surfaceContainerLow,
+        animationSpec = tween(160),
+        label = "Address focus",
+    )
     TextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = modifier.height(48.dp),
+        modifier = modifier.onFocusChanged { focused = it.isFocused },
         placeholder = { Text("Rechercher", maxLines = 1) },
         leadingIcon = {
-            if (browserMode) {
-                IconButton(onClick = onToggleShield) {
-                    Icon(
-                        if (shieldEnabled) Icons.Rounded.Shield else Icons.Rounded.Security,
-                        if (shieldEnabled) "Protection active" else "Protection desactivee",
-                        tint = if (shieldEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                    )
-                }
-            } else {
-                Icon(Icons.Rounded.Search, null)
-            }
-        },
-        trailingIcon = {
-            if (browserMode) {
-                IconButton(onClick = onReload) {
-                    Icon(if (loading) Icons.Rounded.Close else Icons.Rounded.Refresh, if (loading) "Arreter" else "Actualiser")
-                }
+            IconButton(onClick = onToggleShield) {
+                Icon(
+                    if (shieldEnabled) Icons.Rounded.Shield else Icons.Rounded.Security,
+                    if (shieldEnabled) "Protection active" else "Protection désactivée",
+                    tint = if (shieldEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.size(18.dp),
+                )
             }
         },
         singleLine = true,
@@ -655,8 +689,8 @@ private fun AddressField(
             focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
             unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
             disabledIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            focusedContainerColor = container,
+            unfocusedContainerColor = container,
         ),
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
         keyboardActions = KeyboardActions(onGo = {
@@ -687,35 +721,49 @@ private fun HomeContent(
     Surface(Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().imePadding(),
-            contentPadding = PaddingValues(start = 20.dp, top = 28.dp, end = 20.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(22.dp),
+            contentPadding = PaddingValues(start = 24.dp, top = 28.dp, end = 24.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Browse & Cast", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Trouvez une video sur le web, puis envoyez-la sur votre TV.",
-                        style = MaterialTheme.typography.bodyMedium,
+                        "Du téléphone\nà la télé",
+                        style = MaterialTheme.typography.displaySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = (-1.4).sp,
+                    )
+                    Text(
+                        "Diffusez vos vidéos du Web et vos médias locaux.",
+                        style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
             item {
-                OutlinedTextField(
+                TextField(
                     value = address,
                     onValueChange = onAddressChange,
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Recherche ou adresse") },
-                    leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                    placeholder = { Text("Rechercher sur le Web") },
+                    leadingIcon = { Icon(Icons.Rounded.Search, null, modifier = Modifier.size(20.dp)) },
                     trailingIcon = {
-                        IconButton(onClick = {
-                            focusManager.clearFocus()
-                            keyboard?.hide()
-                            onNavigate()
-                        }) { Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Ouvrir") }
+                        FilledTonalIconButton(
+                            onClick = {
+                                focusManager.clearFocus()
+                                keyboard?.hide()
+                                onNavigate()
+                            },
+                            modifier = Modifier.padding(end = 6.dp),
+                        ) { Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Ouvrir", Modifier.size(20.dp)) }
                     },
                     singleLine = true,
-                    shape = RoundedCornerShape(20.dp),
+                    shape = MaterialTheme.shapes.large,
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                    ),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(onGo = {
                         focusManager.clearFocus()
@@ -725,32 +773,41 @@ private fun HomeContent(
                 )
             }
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth().clickable(onClick = onShowLocalMedia),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    shape = RoundedCornerShape(20.dp),
+                Surface(
+                    onClick = onShowLocalMedia,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    color = Color(0xFF28204A),
+                    contentColor = Color(0xFFF7F2FF),
                 ) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(18.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                    Column(
+                        Modifier.fillMaxWidth()
+                            .background(Brush.linearGradient(listOf(Color(0xFF28204A), Color(0xFF453388))))
+                            .padding(22.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
-                        Icon(Icons.Rounded.PhotoLibrary, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
-                        Column(Modifier.weight(1f)) {
-                            Text("Local Media", fontWeight = FontWeight.Bold)
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                Modifier.size(44.dp).background(Color.White.copy(alpha = 0.12f), CircleShape),
+                                contentAlignment = Alignment.Center,
+                            ) { Icon(Icons.Rounded.PhotoLibrary, null, Modifier.size(20.dp)) }
+                            Spacer(Modifier.weight(1f))
+                            Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, Modifier.size(20.dp))
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Médias locaux", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                             Text(
-                                "Caster les photos et videos de ce telephone",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                "Vos photos et vidéos sur grand écran",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color(0xFFE1D8FF),
                             )
                         }
-                        Icon(Icons.AutoMirrored.Rounded.ArrowForward, null)
                     }
                 }
             }
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Acces rapide")
+                    SectionHeader("Accès rapide")
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(QUICK_LINKS, key = { it.url }) { link ->
                             QuickLinkCard(link, onOpenUrl)
@@ -774,7 +831,7 @@ private fun HomeContent(
                 }
             }
             if (recent.isNotEmpty()) {
-                item { SectionHeader("Pages recentes", "Historique", onShowHistory) }
+                item { SectionHeader("Pages récentes", "Historique", onShowHistory) }
                 items(recent, key = { "recent-${it.url}" }) { entry ->
                     SiteRow(
                         title = entry.title,
@@ -790,7 +847,7 @@ private fun HomeContent(
                 }
             }
             if (frequent.isNotEmpty()) {
-                item { SectionHeader("Sites frequents") }
+                item { SectionHeader("Sites fréquents") }
                 items(frequent, key = { "frequent-${it.url}" }) { entry ->
                     SiteRow(
                         title = entry.title,
@@ -803,27 +860,6 @@ private fun HomeContent(
                             }
                         },
                     )
-                }
-            }
-            if (bookmarks.isEmpty() && recent.isEmpty()) {
-                item {
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(18.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(Icons.Rounded.History, null, tint = MaterialTheme.colorScheme.primary)
-                            Column {
-                                Text("Votre espace se construit ici", fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    "Les pages recentes, sites frequents et favoris apparaitront apres votre navigation.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -1047,20 +1083,17 @@ private fun SectionHeader(title: String, actionLabel: String? = null, onAction: 
 
 @Composable
 private fun QuickLinkCard(link: QuickLink, onOpenUrl: (String) -> Unit) {
-    Card(
+    Surface(
         onClick = { onOpenUrl(link.url) },
-        modifier = Modifier.width(104.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
-        Column(
-            Modifier.fillMaxWidth().padding(14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Box(
-                Modifier.size(38.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) { Icon(Icons.Rounded.Language, null, tint = MaterialTheme.colorScheme.onPrimaryContainer) }
+            Icon(Icons.Rounded.Language, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
             Text(link.label, maxLines = 1, style = MaterialTheme.typography.labelLarge)
         }
     }

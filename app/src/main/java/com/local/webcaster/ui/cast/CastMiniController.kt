@@ -1,7 +1,8 @@
 package com.local.webcaster.ui.cast
 
 import android.graphics.BitmapFactory
-import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +19,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.CastConnected
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.StopCircle
@@ -25,6 +28,7 @@ import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -70,16 +74,17 @@ fun CastMiniController(
     var slider by remember(state.title) { mutableFloatStateOf(state.positionMs.toFloat()) }
     var volume by remember { mutableFloatStateOf(state.volume) }
     var subtitlesOpen by remember { mutableStateOf(false) }
+    var detailsOpen by remember { mutableStateOf(false) }
     LaunchedEffect(state.positionMs) { slider = state.positionMs.toFloat() }
     LaunchedEffect(state.volume) { volume = state.volume }
 
     Surface(
         shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
-        shadowElevation = 12.dp,
-        tonalElevation = 4.dp,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shadowElevation = 4.dp,
     ) {
         Column(
-            Modifier.fillMaxWidth().animateContentSize().navigationBarsPadding()
+            Modifier.fillMaxWidth().navigationBarsPadding()
                 .padding(horizontal = 14.dp, vertical = 8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -112,65 +117,82 @@ fun CastMiniController(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (state.queue.size > 1) {
-                    IconButton(onClick = onQueue) { Icon(Icons.AutoMirrored.Rounded.QueueMusic, "File Cast") }
-                }
-                if (state.subtitles.isNotEmpty()) {
-                    androidx.compose.foundation.layout.Box {
-                        IconButton(onClick = { subtitlesOpen = true }) {
-                            Icon(Icons.Rounded.Subtitles, "Sous-titres")
-                        }
-                        DropdownMenu(expanded = subtitlesOpen, onDismissRequest = { subtitlesOpen = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Desactives") },
-                                onClick = { subtitlesOpen = false; onSubtitle(null) },
-                            )
-                            state.subtitles.forEach { track ->
-                                DropdownMenuItem(
-                                    text = { Text((if (track.active) "✓ " else "") + track.label) },
-                                    onClick = { subtitlesOpen = false; onSubtitle(track.id) },
-                                )
-                            }
-                        }
+                FilledTonalIconButton(onClick = onToggle, enabled = state.connected && !state.buffering) {
+                    Crossfade(targetState = state.playing, label = "Play or pause") { playing ->
+                        Icon(
+                            if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                            if (playing) "Pause" else "Lecture",
+                        )
                     }
                 }
-                IconButton(onClick = onToggle, enabled = state.connected && !state.buffering) {
-                    Icon(if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (state.playing) "Pause" else "Lecture")
+                IconButton(onClick = { detailsOpen = !detailsOpen }) {
+                    Icon(
+                        if (detailsOpen) Icons.Rounded.ExpandMore else Icons.Rounded.ExpandLess,
+                        if (detailsOpen) "Masquer les commandes Cast" else "Afficher les commandes Cast",
+                    )
                 }
-                IconButton(onClick = onStop) { Icon(Icons.Rounded.StopCircle, "Arreter la diffusion") }
             }
-            if (state.durationMs > 0) {
-                Slider(
-                    value = slider.coerceIn(0f, state.durationMs.toFloat()),
-                    onValueChange = { slider = it },
-                    onValueChangeFinished = { onSeek(slider.toLong()) },
-                    valueRange = 0f..state.durationMs.toFloat(),
-                    enabled = state.connected && !state.reconnecting,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(formatTime(state.positionMs), style = MaterialTheme.typography.labelSmall)
-                Text(
-                    when {
-                        state.reconnecting -> "Reconnexion"
-                        state.buffering -> "Chargement..."
-                        state.durationMs > 0 -> formatTime(state.durationMs)
-                        else -> "Direct"
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.AutoMirrored.Rounded.VolumeUp, "Volume", Modifier.size(18.dp))
-                Slider(
-                    value = volume.coerceIn(0f, 1f),
-                    onValueChange = { volume = it },
-                    onValueChangeFinished = { onVolume(volume) },
-                    valueRange = 0f..1f,
-                    modifier = Modifier.weight(1f).padding(start = 8.dp),
-                )
-                Text("${(volume * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
+            AnimatedVisibility(detailsOpen) {
+                Column {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        if (state.queue.size > 1) {
+                            IconButton(onClick = onQueue) { Icon(Icons.AutoMirrored.Rounded.QueueMusic, "File Cast") }
+                        }
+                        if (state.subtitles.isNotEmpty()) {
+                            androidx.compose.foundation.layout.Box {
+                                IconButton(onClick = { subtitlesOpen = true }) {
+                                    Icon(Icons.Rounded.Subtitles, "Sous-titres")
+                                }
+                                DropdownMenu(expanded = subtitlesOpen, onDismissRequest = { subtitlesOpen = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text("Desactives") },
+                                        onClick = { subtitlesOpen = false; onSubtitle(null) },
+                                    )
+                                    state.subtitles.forEach { track ->
+                                        DropdownMenuItem(
+                                            text = { Text((if (track.active) "✓ " else "") + track.label) },
+                                            onClick = { subtitlesOpen = false; onSubtitle(track.id) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        IconButton(onClick = onStop) { Icon(Icons.Rounded.StopCircle, "Arrêter la diffusion") }
+                    }
+                    if (state.durationMs > 0) {
+                        Slider(
+                            value = slider.coerceIn(0f, state.durationMs.toFloat()),
+                            onValueChange = { slider = it },
+                            onValueChangeFinished = { onSeek(slider.toLong()) },
+                            valueRange = 0f..state.durationMs.toFloat(),
+                            enabled = state.connected && !state.reconnecting,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(formatTime(state.positionMs), style = MaterialTheme.typography.labelSmall)
+                        Text(
+                            when {
+                                state.reconnecting -> "Reconnexion"
+                                state.buffering -> "Chargement..."
+                                state.durationMs > 0 -> formatTime(state.durationMs)
+                                else -> "Direct"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.AutoMirrored.Rounded.VolumeUp, "Volume", Modifier.size(18.dp))
+                        Slider(
+                            value = volume.coerceIn(0f, 1f),
+                            onValueChange = { volume = it },
+                            onValueChangeFinished = { onVolume(volume) },
+                            valueRange = 0f..1f,
+                            modifier = Modifier.weight(1f).padding(start = 8.dp),
+                        )
+                        Text("${(volume * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
             }
         }
     }

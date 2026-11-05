@@ -8,6 +8,11 @@ import android.graphics.Matrix
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -22,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -33,16 +39,15 @@ import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.BrokenImage
 import androidx.compose.material.icons.rounded.Cast
-import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.QueuePlayNext
 import androidx.compose.material.icons.rounded.Slideshow
-import androidx.compose.material.icons.rounded.VideoFile
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -58,9 +63,11 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.exifinterface.media.ExifInterface
@@ -127,23 +134,34 @@ fun LocalMediaScreen(
 @Composable
 private fun EmptyLocalMedia(onPickMedia: () -> Unit) {
     Box(Modifier.fillMaxSize().padding(28.dp), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Icon(
-                Icons.Rounded.AddPhotoAlternate,
-                null,
-                modifier = Modifier.size(64.dp),
-                tint = MaterialTheme.colorScheme.primary,
-            )
-            Text("Photos et videos locales", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Column(
+            Modifier.widthIn(max = 320.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Surface(
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            ) {
+                Icon(Icons.Rounded.AddPhotoAlternate, null, Modifier.padding(20.dp).size(28.dp))
+            }
             Text(
-                "Selectionnez uniquement les medias a afficher ou caster. Aucun acces global au stockage n'est demande.",
+                "Votre galerie",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                "Choisissez les photos et vidéos à lire ou à diffuser sur votre télé.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
             )
             Button(onClick = onPickMedia) {
                 Icon(Icons.Rounded.AddPhotoAlternate, null)
                 Spacer(Modifier.size(8.dp))
-                Text("Choisir des medias")
+                Text("Choisir des médias")
             }
         }
     }
@@ -167,8 +185,8 @@ private fun LocalGallery(
     val selected = state.selected ?: return
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        contentPadding = PaddingValues(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
             Row(
@@ -176,63 +194,70 @@ private fun LocalGallery(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Column {
-                    Text("Medias locaux", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text(
-                        "${state.items.size} element${if (state.items.size > 1) "s" else ""}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                OutlinedButton(onClick = onPickMedia) {
-                    Icon(Icons.Rounded.AddPhotoAlternate, null)
-                    Spacer(Modifier.size(6.dp))
-                    Text("Modifier")
+                Text(
+                    "${state.items.size} média${if (state.items.size > 1) "s" else ""}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FilledTonalIconButton(onClick = onPickMedia) {
+                    Icon(Icons.Rounded.AddPhotoAlternate, "Modifier la sélection")
                 }
             }
         }
         item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-                shape = RoundedCornerShape(22.dp),
+            Surface(
+                color = Color(0xFF211E2B),
+                shape = MaterialTheme.shapes.large,
             ) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 10f).clickable(enabled = selected.isVideo) {
-                        onLocalPlay(selected)
-                    },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    MediaPreview(selected, Modifier.fillMaxSize(), ContentScale.Fit, 1600)
-                    if (selected.isVideo) {
-                        Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.primary.copy(alpha = .9f)) {
-                            Icon(
-                                Icons.Rounded.PlayArrow,
-                                "Lire sur le telephone",
-                                modifier = Modifier.padding(12.dp).size(36.dp),
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                            )
+                Crossfade(
+                    targetState = selected,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(16f / 10f),
+                    animationSpec = tween(160),
+                    label = "Media preview",
+                ) { item ->
+                    Box(
+                        modifier = Modifier.fillMaxSize().clickable(enabled = item.isVideo) { onLocalPlay(item) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        MediaPreview(item, Modifier.fillMaxSize(), ContentScale.Fit, 1600)
+                        if (item.isVideo) {
+                            Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.primary.copy(alpha = .9f)) {
+                                Icon(
+                                    Icons.Rounded.PlayArrow,
+                                    "Lire sur le téléphone",
+                                    modifier = Modifier.padding(12.dp).size(28.dp),
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                )
+                            }
                         }
                     }
                 }
             }
         }
-        item {
+        if (state.items.size > 1) item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                IconButton(onClick = onPrevious, enabled = state.items.size > 1) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Precedent")
+                IconButton(onClick = onPrevious) {
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Précédent")
                 }
                 Text("${state.selectedIndex + 1} / ${state.items.size}", style = MaterialTheme.typography.labelLarge)
-                IconButton(onClick = onNext, enabled = state.items.size > 1) {
+                IconButton(onClick = onNext) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Suivant")
                 }
             }
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(selected.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    selected.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 Text(
                     mediaDetails(selected),
                     style = MaterialTheme.typography.bodySmall,
@@ -279,6 +304,37 @@ private fun LocalGallery(
                 }
             }
         }
+        if (state.items.size > 1) {
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    itemsIndexed(state.items, key = { _, item -> item.uri.toString() }) { index, item ->
+                        val borderColor by animateColorAsState(
+                            if (index == state.selectedIndex) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            label = "Selected thumbnail",
+                        )
+                        Surface(
+                            onClick = { onSelect(index) },
+                            modifier = Modifier.size(70.dp),
+                            shape = MaterialTheme.shapes.small,
+                            border = BorderStroke(2.dp, borderColor),
+                        ) {
+                            Box(Modifier.fillMaxSize().padding(4.dp)) {
+                                MediaPreview(item, Modifier.fillMaxSize(), ContentScale.Crop, 240)
+                                if (item.isVideo) {
+                                    Surface(
+                                        modifier = Modifier.align(Alignment.BottomEnd),
+                                        shape = MaterialTheme.shapes.small,
+                                        color = MaterialTheme.colorScheme.surface,
+                                    ) {
+                                        Icon(Icons.Rounded.PlayArrow, null, Modifier.padding(2.dp).size(14.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if (state.photoCount > 1) {
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
@@ -289,40 +345,16 @@ private fun LocalGallery(
                             Text("Diaporama", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                             Switch(checked = state.slideshowEnabled, onCheckedChange = onSlideshowEnabled)
                         }
-                        Text("Intervalle : ${state.slideshowIntervalSeconds} s", style = MaterialTheme.typography.bodySmall)
-                        Slider(
-                            value = state.slideshowIntervalSeconds.toFloat(),
-                            onValueChange = { onSlideshowInterval(it.roundToInt()) },
-                            valueRange = 3f..30f,
-                            steps = 26,
-                        )
-                    }
-                }
-            }
-        }
-        item {
-            Text("Selection", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        }
-        item {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                itemsIndexed(state.items, key = { _, item -> item.uri.toString() }) { index, item ->
-                    val selectedItem = index == state.selectedIndex
-                    Card(
-                        modifier = Modifier.size(width = 112.dp, height = 92.dp).clickable { onSelect(index) },
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (selectedItem) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surfaceContainer,
-                        ),
-                        shape = RoundedCornerShape(14.dp),
-                    ) {
-                        Box(Modifier.fillMaxSize()) {
-                            MediaPreview(item, Modifier.fillMaxSize(), ContentScale.Crop, 320)
-                            Icon(
-                                if (item.isPhoto) Icons.Rounded.Image else Icons.Rounded.VideoFile,
-                                null,
-                                modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp).size(18.dp),
-                                tint = MaterialTheme.colorScheme.onSurface,
-                            )
+                        AnimatedVisibility(state.slideshowEnabled) {
+                            Column {
+                                Text("Intervalle · ${state.slideshowIntervalSeconds} s", style = MaterialTheme.typography.bodySmall)
+                                Slider(
+                                    value = state.slideshowIntervalSeconds.toFloat(),
+                                    onValueChange = { onSlideshowInterval(it.roundToInt()) },
+                                    valueRange = 3f..30f,
+                                    steps = 26,
+                                )
+                            }
                         }
                     }
                 }
